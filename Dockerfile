@@ -51,16 +51,20 @@ ENV FLASK_DEBUG=0
 ENV DISPLAY=:99
 ENV PYTHONUNBUFFERED=1
 ENV SELENIUM_HEADLESS=true
-ENV CHROME_ARGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-extensions"
+ENV CHROME_ARGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-extensions --disable-software-rasterizer --disable-setuid-sandbox --single-process --disable-features=VizDisplayCompositor,NetworkService,NetworkServiceInProcess --memory-pressure-off --disable-backing-store-limit --js-flags=\"--max-old-space-size=128\""
 ENV DATA_DIR=/app/data
 ENV SCREENSHOTS_DIR=/app/data/screenshots
 
-# Create startup script
+# Create memory optimization script for Chrome
 RUN echo '#!/bin/bash\n\
-# Start virtual display with Xvfb\n\
-Xvfb :99 -screen 0 1280x1024x24 > /dev/null 2>&1 &\n\
+# Clean any defunct Chrome processes\n\
+pkill -9 chrome || true\n\
+# Clear browser cache periodically\n\
+rm -rf /tmp/* /tmp/.* 2>/dev/null || true\n\
+# Start virtual display with minimal resolution\n\
+Xvfb :99 -screen 0 1024x768x16 -ac > /dev/null 2>&1 &\n\
 # Start the Flask application with gunicorn\n\
-gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 "run:app"\n\
+gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120 "run:app"\n\
 ' > /app/startup.sh \
     && chmod +x /app/startup.sh
 

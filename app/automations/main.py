@@ -84,34 +84,35 @@ def init_driver(headless=False):
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--disable-infobars")
     
-    # Add headless mode only if specified
+    # Add memory optimization flags from environment or use defaults
+    chrome_args = os.environ.get('CHROME_ARGS', '--disable-dev-shm-usage --disable-gpu')
+    for arg in chrome_args.split():
+        chrome_options.add_argument(arg)
+    
     if headless:
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--start-maximized")
-        chrome_options.add_argument("--no-sandbox")
-        
+        chrome_options.add_argument("--headless")
+    
     # Load the captcha solver extension (this extension will handle reCAPTCHA automatically)
+    capsolver_api_key = os.environ.get('CAPSOLVER_API_KEY') or Config.CAPSOLVER_API_KEY
     chrome_options.add_argument(
-        Capsolver(Config.CAPSOLVER_API_KEY).load()
+        Capsolver(capsolver_api_key).load()
     )
 
     # Install chromedriver if not present
     chromedriver_autoinstaller.install()
-    driver = webdriver.Chrome(options=chrome_options)
     
-    # Set window size if not headless
-    if not headless:
-        driver.set_window_size(1280, 800)
-        
-    # Additional stealth settings that work in both headless and regular mode
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    # Set window size to minimum needed (saves memory)
+    driver = webdriver.Chrome(options=chrome_options)
+    driver.set_window_size(1024, 768)
+    
+    # Set page load timeout
+    driver.set_page_load_timeout(60)
     
     return driver
 
 
 # ------------------------------
-# Login function with URL check
+# Login function with URL check and retries
 # ------------------------------
 def login(driver, email, password,
           login_button_xpath,
@@ -119,63 +120,112 @@ def login(driver, email, password,
           password_input_id,
           submit_button_xpath,
           group_id=None):
-    try:
-        # Click the 'Login' button
-        dm.add_log(f"Clicking login button for {email}", "info", group_id=group_id)
-        # login_btn = driver.find_element(By.XPATH, login_button_xpath)
-        # login_btn.click()
-        driver.get("https://www.airtasker.com/login")
-        time.sleep(random.uniform(2, 4))
-        time.sleep(random.uniform(7, 10))
-        
-        # Take screenshot of login page
-        save_screenshot(driver, "login_page", group_id)
-        
-        # Type the email
-        dm.add_log(f"Typing email: {email}", "info", group_id=group_id)
-        email_field = driver.find_element(By.ID, email_input_id)
-        time.sleep(random.uniform(1, 2))
-        email_field.clear()
-        for c in email:
-            email_field.send_keys(c)
-            time.sleep(random.uniform(0.04, 0.2))
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            # Clear cookies and cache on retries
+            if retry_count > 0:
+                dm.add_log(f"Retry login attempt {retry_count}/{max_retries}", "info", group_id=group_id)
+                driver.delete_all_cookies()
+                driver.get("about:blank")
+                time.sleep(random.uniform(2, 3))
+            
+            # Navigate to homepage
+            driver.get("https://www.airtasker.com/")
+            time.sleep(random.uniform(5, 8))
+            
+            # Click the 'Login' button
+            login_btn = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.XPATH, login_button_xpath))
+            )
+            login_btn.click()
+            dm.add_log("Clicked login button", "info", group_id=group_id)
+            time.sleep(random.uniform(2, 4))
+            time.sleep(random.uniform(7, 10))
+            
+            # Type the email
+            try:
+                email_field = WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.ID, email_input_id))
+                )
+                time.sleep(random.uniform(1, 2))
+                email_field.clear()
+                for c in email:
+                    email_field.send_keys(c)
+                    time.sleep(random.uniform(0.04, 0.2))
+                dm.add_log("Entered email", "info", group_id=group_id)
+            except Exception as e:
+                save_screenshot(driver, "email_field_error", group_id)
+                dm.add_log(f"Error entering email: {str(e)}", "error", group_id=group_id)
+                raise
 
-        # Type the password
-        dm.add_log("Typing password", "info", group_id=group_id)
-        password_field = driver.find_element(By.ID, password_input_id)
-        time.sleep(random.uniform(1, 2))
-        password_field.clear()
-        for c in password:
-            password_field.send_keys(c)
-            time.sleep(random.uniform(0.04, 0.15))
+            # Type the password
+            try:
+                password_field = WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.ID, password_input_id))
+                )
+                time.sleep(random.uniform(1, 2))
+                password_field.clear()
+                for c in password:
+                    password_field.send_keys(c)
+                    time.sleep(random.uniform(0.04, 0.15))
+                dm.add_log("Entered password", "info", group_id=group_id)
+            except Exception as e:
+                save_screenshot(driver, "password_field_error", group_id)
+                dm.add_log(f"Error entering password: {str(e)}", "error", group_id=group_id)
+                raise
 
-        # (Captcha is solved automatically by the extension)
-        dm.add_log("Waiting for captcha to be solved automatically", "info", group_id=group_id)
-        time.sleep(random.uniform(2, 4))
-        
-        # Submit the login form
-        dm.add_log("Submitting login form", "info", group_id=group_id)
-        submit_btn = driver.find_element(By.XPATH, submit_button_xpath)
-        submit_btn.click()
-        
-        # Wait for post-login redirect
-        time.sleep(random.uniform(10, 15))
-        
-        # Take screenshot after login
-        save_screenshot(driver, "post_login", group_id)
-        
-        # Check if the current URL is the expected discover page
-        if driver.current_url != "https://www.airtasker.com/discover/" and "https://www.airtasker.com/" not in driver.current_url:
+            # (Captcha is solved automatically by the extension)
+            time.sleep(random.uniform(2, 4))
+            
+            # Submit the login form
+            try:
+                submit_btn = WebDriverWait(driver, 15).until(
+                    EC.element_to_be_clickable((By.XPATH, submit_button_xpath))
+                )
+                submit_btn.click()
+                dm.add_log("Submitting login form", "info", group_id=group_id)
+            except Exception as e:
+                save_screenshot(driver, "submit_button_error", group_id)
+                dm.add_log(f"Error clicking submit button: {str(e)}", "error", group_id=group_id)
+                raise
+                
+            # Wait for post-login redirect with a longer timeout
+            time.sleep(random.uniform(15, 20))
+            
+            # Take a screenshot of the post-login page
+            save_screenshot(driver, "post_login", group_id)
+            
+            # Check current URL - accept either discover or tasks page
+            if not (driver.current_url.startswith("https://www.airtasker.com/discover/") or 
+                    driver.current_url.startswith("https://www.airtasker.com/tasks/") or
+                    driver.current_url.startswith("https://www.airtasker.com/dashboard/")):
+                save_screenshot(driver, "login_error", group_id)
+                error_msg = f"Login failed: Did not redirect to expected page. Current URL: {driver.current_url}"
+                dm.add_log(error_msg, "error", group_id=group_id)
+                
+                if retry_count < max_retries - 1:
+                    retry_count += 1
+                    continue
+                else:
+                    save_screenshot(driver, "error", group_id)
+                    raise Exception(error_msg)
+            
+            dm.add_log("Login successful", "info", group_id=group_id)
+            return  # Success!
+            
+        except Exception as e:
             save_screenshot(driver, "login_error", group_id)
-            dm.add_log(f"Login failed: Did not redirect to expected page. Current URL: {driver.current_url}", "error", group_id=group_id)
-            raise Exception(f"Login failed: Did not redirect to expected page. Current URL: {driver.current_url}")
-        
-        dm.add_log("Login successful", "info", group_id=group_id)
-        return True
-    except Exception as e:
-        save_screenshot(driver, "login_error", group_id)
-        dm.add_log(f"Login error: {str(e)}", "error", group_id=group_id)
-        raise
+            dm.add_log(f"Login error: {str(e)}", "error", group_id=group_id)
+            
+            if retry_count < max_retries - 1:
+                retry_count += 1
+                time.sleep(random.uniform(5, 10))  # Wait before retrying
+            else:
+                save_screenshot(driver, "error", group_id)
+                raise  # Re-raise the last exception after all retries fail
 
 
 # ------------------------------
