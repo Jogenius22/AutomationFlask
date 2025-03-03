@@ -112,16 +112,19 @@ def init_driver(headless=False):
 
 
 # ------------------------------
-# Login function with URL check and retries
+# Login function with better verification and retries
 # ------------------------------
 def login(driver, email, password,
-          login_button_xpath,
+          login_button_xpath,  # Not used but kept for compatibility
           email_input_id,
           password_input_id,
           submit_button_xpath,
           group_id=None):
     max_retries = 3
     retry_count = 0
+    
+    # XPath for the avatar that appears when logged in
+    avatar_xpath = '//*[@id="overlay-provider"]/nav/div[2]/div/div/div/div[2]/button/div/div'
     
     while retry_count < max_retries:
         try:
@@ -132,18 +135,12 @@ def login(driver, email, password,
                 driver.get("about:blank")
                 time.sleep(random.uniform(2, 3))
             
-            # Navigate to homepage
-            driver.get("https://www.airtasker.com/")
+            # Navigate directly to login page instead of clicking login button
+            driver.get("https://www.airtasker.com/login")
             time.sleep(random.uniform(5, 8))
             
-            # Click the 'Login' button
-            login_btn = WebDriverWait(driver, 15).until(
-                EC.element_to_be_clickable((By.XPATH, login_button_xpath))
-            )
-            login_btn.click()
-            dm.add_log("Clicked login button", "info", group_id=group_id)
-            time.sleep(random.uniform(2, 4))
-            time.sleep(random.uniform(7, 10))
+            # Take screenshot of login page
+            save_screenshot(driver, "login_page", group_id)
             
             # Type the email
             try:
@@ -198,12 +195,17 @@ def login(driver, email, password,
             # Take a screenshot of the post-login page
             save_screenshot(driver, "post_login", group_id)
             
-            # Check current URL - accept either discover or tasks page
-            if not (driver.current_url.startswith("https://www.airtasker.com/discover/") or 
-                    driver.current_url.startswith("https://www.airtasker.com/tasks/") or
-                    driver.current_url.startswith("https://www.airtasker.com/dashboard/")):
-                save_screenshot(driver, "login_error", group_id)
-                error_msg = f"Login failed: Did not redirect to expected page. Current URL: {driver.current_url}"
+            # Check for avatar element instead of URL to verify login success
+            try:
+                # Wait for avatar element to be present (indicates logged in state)
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, avatar_xpath))
+                )
+                dm.add_log("Login successful - avatar element found", "info", group_id=group_id)
+                return  # Success!
+            except Exception as e:
+                save_screenshot(driver, "login_verification_error", group_id)
+                error_msg = f"Login failed: User avatar not found. Current URL: {driver.current_url}"
                 dm.add_log(error_msg, "error", group_id=group_id)
                 
                 if retry_count < max_retries - 1:
@@ -212,9 +214,6 @@ def login(driver, email, password,
                 else:
                     save_screenshot(driver, "error", group_id)
                     raise Exception(error_msg)
-            
-            dm.add_log("Login successful", "info", group_id=group_id)
-            return  # Success!
             
         except Exception as e:
             save_screenshot(driver, "login_error", group_id)
