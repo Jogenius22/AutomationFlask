@@ -1,4 +1,5 @@
 # Render.yaml configuration for Airtasker Bot Manager
+# Updated configuration to avoid permission issues
 
 services:
   - type: web
@@ -15,15 +16,18 @@ services:
       apt-get update && apt-get install -y google-chrome-stable
       # Install Python dependencies
       pip install -r requirements.txt
-      # Create initial data structure in the code repo (NOT on the mounted disk yet)
+      # Create initial data structure in the code repo
       mkdir -p data data/screenshots
-    startCommand: |
-      # Create any required directories on the mounted volume
+      # Create startup script
+      echo '#!/bin/bash
       mkdir -p /app/data/screenshots || true
       # Start virtual display with Xvfb
       Xvfb :99 -screen 0 1280x1024x24 > /dev/null 2>&1 &
       # Start the Flask application with gunicorn
       gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 4 "run:app"
+      ' > startup.sh
+      chmod +x startup.sh
+    startCommand: /app/startup.sh
     envVars:
       - key: FLASK_APP
         value: app
@@ -46,14 +50,5 @@ services:
     disk:
       name: airtasker_data
       mountPath: /app/data
-      sizeGB: 10 # Adjust based on your needs
+      sizeGB: 2 # Adjust based on your needs
     healthCheckPath: /
-    domains:
-      - airtasker-bot-manager.onrender.com # This will be automatically assigned by Render
-
-# Note: This configuration:
-# 1. Installs Chrome, Xvfb, and all necessary dependencies for headless browsing
-# 2. Sets up a virtual display with Xvfb before starting the application
-# 3. Configures Chrome to run in a containerized environment with appropriate flags
-# 4. Provides persistent storage for logs and screenshots
-# 5. Sets up necessary environment variables for proper operation
