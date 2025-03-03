@@ -61,17 +61,18 @@ class Capsolver(Extension):
 # Helper function for screenshots
 # ------------------------------
 def save_screenshot(driver, prefix, group_id):
-    timestamp = int(time.time())
-    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-    filename = f"{prefix}_{timestamp}.png"
-    filepath = os.path.join(SCREENSHOTS_DIR, filename)
     try:
+        timestamp = int(time.time())
+        os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+        filename = f"{prefix}_{timestamp}.png"
+        filepath = os.path.join(SCREENSHOTS_DIR, filename)
         driver.save_screenshot(filepath)
         # Log the screenshot
         dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
+        return filename
     except Exception as e:
         dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id)
-    return filename
+        return None
 
 
 # ------------------------------
@@ -84,26 +85,14 @@ def init_driver(headless=False):
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--disable-infobars")
     
-    # Enhanced browser stability settings
-    chrome_options.add_argument("--disable-dev-shm-usage")    # Overcome limited resource issues
-    chrome_options.add_argument("--disable-gpu")              # Disable GPU hardware acceleration
-    chrome_options.add_argument("--no-sandbox")               # Disable sandbox for headless compatibility
-    chrome_options.add_argument("--disable-extensions")       # Disable extensions except capsolver
-    chrome_options.add_argument("--disable-browser-side-navigation") # Avoid crashes when loading pages
-    
-    # Set process limit to reduce memory usage
-    chrome_options.add_argument("--renderer-process-limit=1") 
-    chrome_options.add_argument("--single-process")
-    
-    # Add memory optimization flags from environment or use defaults
-    chrome_args = os.environ.get('CHROME_ARGS', '')
-    if chrome_args:
-        for arg in chrome_args.split():
-            chrome_options.add_argument(arg)
-    
+    # Add headless mode only if specified
     if headless:
-        chrome_options.add_argument("--headless=new")  # Use newer headless mode
-    
+        chrome_options.add_argument("--headless=new")
+        chrome_options.add_argument("--window-size=1920,1080")
+        chrome_options.add_argument("--start-maximized")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        
     # Load the captcha solver extension (this extension will handle reCAPTCHA automatically)
     capsolver_api_key = os.environ.get('CAPSOLVER_API_KEY') or Config.CAPSOLVER_API_KEY
     chrome_options.add_argument(
@@ -112,22 +101,23 @@ def init_driver(headless=False):
 
     # Install chromedriver if not present
     chromedriver_autoinstaller.install()
-    
-    # Set window size to minimum needed (saves memory)
     driver = webdriver.Chrome(options=chrome_options)
-    driver.set_window_size(800, 600)  # Reduced window size to save memory
     
-    # Set page load timeout
-    driver.set_page_load_timeout(60)
+    # Set window size if not headless
+    if not headless:
+        driver.set_window_size(1280, 800)
+        
+    # Additional stealth settings that work in both headless and regular mode
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
     return driver
 
 
 # ------------------------------
-# Login function with better verification and retries
+# Login function with better verification
 # ------------------------------
 def login(driver, email, password,
-          login_button_xpath,  # Not used but kept for compatibility
+          login_button_xpath,
           email_input_id,
           password_input_id,
           submit_button_xpath,
@@ -135,19 +125,19 @@ def login(driver, email, password,
     max_retries = 3
     retry_count = 0
     
-    # XPath for the avatar that appears when logged in
+    # XPath for the avatar that appears when logged in (kept for verification)
     avatar_xpath = '//*[@id="overlay-provider"]/nav/div[2]/div/div/div/div[2]/button/div/div'
     
     while retry_count < max_retries:
         try:
-            # Clear cookies and cache on retries
             if retry_count > 0:
                 dm.add_log(f"Retry login attempt {retry_count}/{max_retries}", "info", group_id=group_id)
                 driver.delete_all_cookies()
                 driver.get("about:blank")
                 time.sleep(random.uniform(2, 3))
-            
+                
             # Navigate directly to login page instead of clicking login button
+            dm.add_log(f"Navigating to login page for {email}", "info", group_id=group_id)
             driver.get("https://www.airtasker.com/login")
             time.sleep(random.uniform(5, 8))
             
@@ -155,77 +145,60 @@ def login(driver, email, password,
             save_screenshot(driver, "login_page", group_id)
             
             # Type the email
-            try:
-                email_field = WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.ID, email_input_id))
-                )
-                time.sleep(random.uniform(1, 2))
-                email_field.clear()
-                for c in email:
-                    email_field.send_keys(c)
-                    time.sleep(random.uniform(0.04, 0.2))
-                dm.add_log("Entered email", "info", group_id=group_id)
-            except Exception as e:
-                save_screenshot(driver, "email_field_error", group_id)
-                dm.add_log(f"Error entering email: {str(e)}", "error", group_id=group_id)
-                raise
+            dm.add_log(f"Typing email", "info", group_id=group_id)
+            email_field = driver.find_element(By.ID, email_input_id)
+            time.sleep(random.uniform(1, 2))
+            email_field.clear()
+            for c in email:
+                email_field.send_keys(c)
+                time.sleep(random.uniform(0.04, 0.2))
 
             # Type the password
-            try:
-                password_field = WebDriverWait(driver, 15).until(
-                    EC.presence_of_element_located((By.ID, password_input_id))
-                )
-                time.sleep(random.uniform(1, 2))
-                password_field.clear()
-                for c in password:
-                    password_field.send_keys(c)
-                    time.sleep(random.uniform(0.04, 0.15))
-                dm.add_log("Entered password", "info", group_id=group_id)
-            except Exception as e:
-                save_screenshot(driver, "password_field_error", group_id)
-                dm.add_log(f"Error entering password: {str(e)}", "error", group_id=group_id)
-                raise
+            dm.add_log("Typing password", "info", group_id=group_id)
+            password_field = driver.find_element(By.ID, password_input_id)
+            time.sleep(random.uniform(1, 2))
+            password_field.clear()
+            for c in password:
+                password_field.send_keys(c)
+                time.sleep(random.uniform(0.04, 0.15))
 
             # (Captcha is solved automatically by the extension)
+            dm.add_log("Waiting for captcha to be solved automatically", "info", group_id=group_id)
             time.sleep(random.uniform(2, 4))
             
             # Submit the login form
-            try:
-                submit_btn = WebDriverWait(driver, 15).until(
-                    EC.element_to_be_clickable((By.XPATH, submit_button_xpath))
-                )
-                submit_btn.click()
-                dm.add_log("Submitting login form", "info", group_id=group_id)
-            except Exception as e:
-                save_screenshot(driver, "submit_button_error", group_id)
-                dm.add_log(f"Error clicking submit button: {str(e)}", "error", group_id=group_id)
-                raise
-                
-            # Wait for post-login redirect with a longer timeout
+            dm.add_log("Submitting login form", "info", group_id=group_id)
+            submit_btn = driver.find_element(By.XPATH, submit_button_xpath)
+            submit_btn.click()
+            
+            # Wait for post-login redirect
             time.sleep(random.uniform(15, 20))
             
-            # Take a screenshot of the post-login page
+            # Take screenshot after login
             save_screenshot(driver, "post_login", group_id)
             
-            # Check for avatar element instead of URL to verify login success
+            # Check for avatar element to verify login success
             try:
-                # Wait for avatar element to be present (indicates logged in state)
                 WebDriverWait(driver, 10).until(
                     EC.presence_of_element_located((By.XPATH, avatar_xpath))
                 )
                 dm.add_log("Login successful - avatar element found", "info", group_id=group_id)
-                return  # Success!
+                return True
             except Exception as e:
-                save_screenshot(driver, "login_verification_error", group_id)
-                error_msg = f"Login failed: User avatar not found. Current URL: {driver.current_url}"
-                dm.add_log(error_msg, "error", group_id=group_id)
-                
-                if retry_count < max_retries - 1:
-                    retry_count += 1
-                    continue
+                # If avatar not found, check URL as a fallback
+                if "airtasker.com" in driver.current_url and ("/login" not in driver.current_url):
+                    dm.add_log(f"Login seems successful based on URL: {driver.current_url}", "info", group_id=group_id)
+                    return True
                 else:
-                    save_screenshot(driver, "error", group_id)
-                    raise Exception(error_msg)
+                    save_screenshot(driver, "login_verification_error", group_id)
+                    error_msg = f"Login failed verification. Current URL: {driver.current_url}, error: {str(e)}"
+                    dm.add_log(error_msg, "error", group_id=group_id)
+                    
+                    if retry_count < max_retries - 1:
+                        retry_count += 1
+                        continue
+                    else:
+                        raise Exception(error_msg)
             
         except Exception as e:
             save_screenshot(driver, "login_error", group_id)
@@ -235,7 +208,6 @@ def login(driver, email, password,
                 retry_count += 1
                 time.sleep(random.uniform(5, 10))  # Wait before retrying
             else:
-                save_screenshot(driver, "error", group_id)
                 raise  # Re-raise the last exception after all retries fail
 
 
@@ -367,122 +339,80 @@ def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_
         message_content = "Hey, you might get better quotes posting on the SmartTasker app. The fees are 25% less!"
         
     driver = None
-    max_restart_attempts = 2  # Add restart attempts to recover from session failures
-    restart_count = 0
-    
-    while restart_count <= max_restart_attempts:
-        try:
-            if restart_count > 0:
-                dm.add_log(f"Restarting browser session (attempt {restart_count}/{max_restart_attempts})", "info", group_id=group_id)
-            
-            dm.add_log(f"Starting Airtasker bot for {email} in {'headless' if headless else 'visible'} mode", "info", group_id=group_id)
-            
-            # Initialization with headless parameter
-            driver = init_driver(headless=headless)
-            
-            # Explicitly set script timeout to avoid timeout issues
-            driver.set_script_timeout(120)
-            
-            # Add a keep-alive mechanism
-            driver.execute_script("window.onbeforeunload = function() { return 1; };")
-            
-            # Load the site
-            driver.get("https://www.airtasker.com/")
-            time.sleep(random.uniform(5, 8))
-            
-            # Take initial screenshot
-            save_screenshot(driver, "initial_page", group_id)
-            
-            # Credentials and login XPaths
-            login_button_xpath = '//*[@id="airtasker-app"]/nav/div[2]/div/div/div/div[2]/a[2]'
-            email_input_id = "username"
-            password_input_id = "password"
-            submit_button_xpath = "/html/body/main/section/div/div/div/form/div[2]/button"
+    try:
+        dm.add_log(f"Starting Airtasker bot for {email} in {'headless' if headless else 'visible'} mode", "info", group_id=group_id)
+        
+        # Initialization with headless parameter
+        driver = init_driver(headless=headless)
+        driver.get("https://www.airtasker.com/")
+        time.sleep(random.uniform(5, 8))
+        
+        # Take initial screenshot
+        save_screenshot(driver, "initial_page", group_id)
+        
+        # Credentials and login XPaths
+        login_button_xpath = '//*[@id="airtasker-app"]/nav/div[2]/div/div/div/div[2]/a[2]'
+        email_input_id = "username"
+        password_input_id = "password"
+        submit_button_xpath = "/html/body/main/section/div/div/div/form/div[2]/button"
 
-            # 1. LOGIN (with URL verification)
-            login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath, group_id)
-            dm.add_log("Login successful.", "info", group_id=group_id)
+        # 1. LOGIN (with URL verification)
+        login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath, group_id)
+        dm.add_log("Login successful.", "info", group_id=group_id)
 
-            time.sleep(5)
-            # 2. Navigate to tasks page
-            tasks_page_url = "https://www.airtasker.com/tasks"
-            dm.add_log(f"Navigating to tasks page: {tasks_page_url}", "info", group_id=group_id)
-            driver.get(tasks_page_url)
-            time.sleep(random.uniform(5, 8))
+        time.sleep(5)
+        # 2. Navigate to tasks page
+        tasks_page_url = "https://www.airtasker.com/tasks"
+        dm.add_log(f"Navigating to tasks page: {tasks_page_url}", "info", group_id=group_id)
+        driver.get(tasks_page_url)
+        time.sleep(random.uniform(5, 8))
 
-            # 3. Set location filter
-            set_location_filter(driver, city_name, 100, group_id)
-            dm.add_log("Location filter set.", "info", group_id=group_id)
+        # 3. Set location filter
+        set_location_filter(driver, city_name, 100, group_id)
+        dm.add_log("Location filter set.", "info", group_id=group_id)
 
-            # 4. Scrape tasks
-            task_container_xpath = '//a[@data-ui-test="task-list-item" and @data-task-id]'
-            title_xpath = './/p[contains(@class,"TaskCard__StyledTitle")]'
-            link_xpath = '.'
-            tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5, group_id=group_id)
-            
-            if not tasks:
-                dm.add_log("No tasks found to comment on", "warning", group_id=group_id)
-                return True, "Completed with no tasks to comment on"
+        # 4. Scrape tasks
+        task_container_xpath = '//a[@data-ui-test="task-list-item" and @data-task-id]'
+        title_xpath = './/p[contains(@class,"TaskCard__StyledTitle")]'
+        link_xpath = '.'
+        tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5, group_id=group_id)
+        
+        if not tasks:
+            dm.add_log("No tasks found to comment on", "warning", group_id=group_id)
+            return True, "Completed with no tasks to comment on"
 
-            time.sleep(random.uniform(5, 10))
-            
-            # 5. Post comments on a subset of tasks
-            comment_on_some_tasks(driver, tasks, message_content, max_to_post=max_posts, image_path=None, group_id=group_id)
-            
-            save_screenshot(driver, "completed", group_id)
-            dm.add_log("Bot task completed successfully", "success", group_id=group_id)
-            return True, "Bot completed successfully"
+        time.sleep(random.uniform(5, 10))
+        
+        # 5. Post comments on a subset of tasks (with optional image upload)
+        # Use the message content passed from the dashboard
+        comment_on_some_tasks(driver, tasks, message_content, max_to_post=max_posts, image_path=None, group_id=group_id)
+        
+        save_screenshot(driver, "completed", group_id)
+        dm.add_log("Bot completed successfully", "success", group_id=group_id)
+        return True, "Bot completed successfully"
 
-        except Exception as e:
-            error_str = str(e)
-            
-            # Check if this is a session-related error that could benefit from restarting
-            if "invalid session id" in error_str or "session deleted" in error_str or "no such session" in error_str:
-                if restart_count < max_restart_attempts:
-                    if driver:
-                        try:
-                            driver.quit()
-                        except:
-                            pass  # Ignore errors during driver cleanup
-                        driver = None
-                    
-                    # Increase wait time between retries
-                    wait_time = (restart_count + 1) * 5
-                    dm.add_log(f"Browser session issue detected. Waiting {wait_time}s before restart.", "warning", group_id=group_id)
-                    time.sleep(wait_time)
-                    restart_count += 1
-                    continue
-            
-            # For non-session errors or if we've exceeded restarts
-            if driver:
-                try:
-                    save_screenshot(driver, "error", group_id)
-                except:
-                    dm.add_log("Could not save error screenshot due to browser state", "warning", group_id=group_id)
-                    
-            dm.add_log(f"Error in bot: {error_str}", "error", group_id=group_id)
-            return False, error_str
-            
-        finally:
-            if driver:
-                try:
-                    dm.add_log("Closing browser.", "info", group_id=group_id)
-                    driver.quit()
-                except Exception as quit_err:
-                    dm.add_log(f"Error closing browser: {str(quit_err)}", "warning", group_id=group_id)
+    except Exception as e:
+        if driver:
+            save_screenshot(driver, "error", group_id)
+        dm.add_log(f"Error in bot: {str(e)}", "error", group_id=group_id)
+        return False, str(e)
+    finally:
+        if driver:
+            dm.add_log("Closing browser.", "info", group_id=group_id)
+            driver.quit()
 
 
 # ------------------------------
 # Main execution
 # ------------------------------
 def main():
-    driver = init_driver()
+    driver = init_driver(headless=False)  # False by default but explicitly set for clarity
     driver.get("https://www.airtasker.com/")
     time.sleep(random.uniform(5, 8))
     try:
         # Credentials and login XPaths
-        email = "example@example.com"  # Replace with your email for testing
-        password = "your_password_here"  # Replace with your password for testing
+        email = "Donnahartspare2000@gmail.com"
+        password = "Cairns@2000"
         login_button_xpath = '//*[@id="airtasker-app"]/nav/div[2]/div/div/div/div[2]/a[2]'
         email_input_id = "username"
         password_input_id = "password"
@@ -517,7 +447,7 @@ def main():
         # 5. Post comments on a subset of tasks
         # Use a default message for this test run
         message = "Hey you might get better quotes on SmartTasker app. Fees are 25% less!"
-        comment_on_some_tasks(driver, tasks, max_to_post=3, message_content=message)
+        comment_on_some_tasks(driver, tasks, message, max_to_post=3)
 
     finally:
         print("Closing browser.")
