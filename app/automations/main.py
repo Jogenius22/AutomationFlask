@@ -85,16 +85,30 @@ def init_driver(headless=False):
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--disable-infobars")
     
-    # Add headless mode only if specified
+    # Extension support settings
+    chrome_options.add_argument("--enable-extensions")
+    chrome_options.add_argument("--disable-web-security")
+    chrome_options.add_argument("--allow-running-insecure-content")
+    
+    # Add headless mode and related flags only if specified
     if headless:
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
         
-    # Load the captcha solver extension (this extension will handle reCAPTCHA automatically)
-    capsolver_api_key = os.environ.get('CAPSOLVER_API_KEY') or Config.CAPSOLVER_API_KEY
+        # Add environment Chrome args if available
+        chrome_args = os.environ.get('CHROME_ARGS', '')
+        if chrome_args:
+            for arg in chrome_args.split():
+                if arg not in chrome_options.arguments:
+                    chrome_options.add_argument(arg)
+    
+    # Load the captcha solver extension
+    capsolver_api_key = os.environ.get('CAPSOLVER_API_KEY', 'CAP-F79C6D0E7A810348A201783E25287C6003CFB45BBDCB670F96E525E7C0132148')
+    dm.add_log(f"Initializing Capsolver extension (API key length: {len(capsolver_api_key)})", "info")
     chrome_options.add_argument(
         Capsolver(capsolver_api_key).load()
     )
@@ -109,6 +123,9 @@ def init_driver(headless=False):
         
     # Additional stealth settings that work in both headless and regular mode
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    
+    # Set page load timeout
+    driver.set_page_load_timeout(60)
     
     return driver
 
@@ -128,6 +145,9 @@ def login(driver, email, password,
     # XPath for the avatar that appears when logged in (kept for verification)
     avatar_xpath = '//*[@id="overlay-provider"]/nav/div[2]/div/div/div/div[2]/button/div/div'
     
+    # XPath for the reCAPTCHA iframe
+    recaptcha_iframe_xpath = "//iframe[contains(@title, 'recaptcha')]"
+    
     while retry_count < max_retries:
         try:
             if retry_count > 0:
@@ -143,6 +163,10 @@ def login(driver, email, password,
             
             # Take screenshot of login page
             save_screenshot(driver, "login_page", group_id)
+            
+            # IMPORTANT: Wait for Capsolver to begin working by giving it time to detect the captcha
+            dm.add_log("Waiting for Capsolver to detect captcha before entering credentials", "info", group_id=group_id)
+            time.sleep(random.uniform(10, 15))
             
             # Type the email
             dm.add_log(f"Typing email", "info", group_id=group_id)
@@ -162,14 +186,60 @@ def login(driver, email, password,
                 password_field.send_keys(c)
                 time.sleep(random.uniform(0.04, 0.15))
 
-            # (Captcha is solved automatically by the extension)
-            dm.add_log("Waiting for captcha to be solved automatically", "info", group_id=group_id)
-            time.sleep(random.uniform(2, 4))
+            # Captcha should be solved automatically by the extension
+            # We need to explicitly wait for the captcha to be solved
+            dm.add_log("Waiting for captcha to be solved by Capsolver...", "info", group_id=group_id)
+            captcha_wait_time = 30  # Give up to 30 seconds for solving
+            captcha_solved = False
+            start_time = time.time()
+            
+            while time.time() - start_time < captcha_wait_time:
+                # Check if the reCAPTCHA iframe is still present
+                try:
+                    recaptcha_frames = driver.find_elements(By.XPATH, recaptcha_iframe_xpath)
+                    if not recaptcha_frames:
+                        dm.add_log("Captcha appears to be solved (iframe no longer present)", "info", group_id=group_id)
+                        captcha_solved = True
+                        break
+                except:
+                    # If error finding frames, we'll assume it might be solved
+                    pass
+                
+                # Take periodic screenshots to monitor captcha progress
+                if (time.time() - start_time) % 10 < 1:  # Every ~10 seconds
+                    save_screenshot(driver, "captcha_progress", group_id)
+                
+                time.sleep(1)  # Check every second
+            
+            if not captcha_solved:
+                dm.add_log("WARNING: Not certain if captcha was solved. Will try to continue.", "warning", group_id=group_id)
+            
+            # Wait a bit more before clicking submit to ensure captcha is completely processed
+            time.sleep(random.uniform(3, 5))
+            save_screenshot(driver, "before_submit", group_id)
             
             # Submit the login form
             dm.add_log("Submitting login form", "info", group_id=group_id)
-            submit_btn = driver.find_element(By.XPATH, submit_button_xpath)
-            submit_btn.click()
+            try:
+                # Use WebDriverWait to wait for the submit button to be clickable
+                submit_btn = WebDriverWait(driver, 10).until(
+                    EC.element_to_be_clickable((By.XPATH, submit_button_xpath))
+                )
+                submit_btn.click()
+                dm.add_log("Clicked submit button", "info", group_id=group_id)
+            except Exception as e:
+                dm.add_log(f"Error clicking submit button: {str(e)}", "error", group_id=group_id)
+                save_screenshot(driver, "submit_error", group_id)
+                
+                # Try JavaScript click as fallback
+                try:
+                    dm.add_log("Trying JavaScript click as fallback", "info", group_id=group_id)
+                    submit_btn = driver.find_element(By.XPATH, submit_button_xpath)
+                    driver.execute_script("arguments[0].click();", submit_btn)
+                    dm.add_log("JavaScript click successful", "info", group_id=group_id)
+                except Exception as js_error:
+                    dm.add_log(f"JavaScript click also failed: {str(js_error)}", "error", group_id=group_id)
+                    raise
             
             # Wait for post-login redirect
             time.sleep(random.uniform(15, 20))
