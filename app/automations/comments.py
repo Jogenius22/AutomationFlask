@@ -7,18 +7,21 @@ from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from app import data_manager as dm
+from config import SCREENSHOTS_DIR
 
 # Helper function to save screenshots
 def save_screenshot(driver, prefix, group_id):
     """Helper function to save screenshots to a consistent location"""
     timestamp = int(time.time())
-    screenshots_dir = os.path.join(os.getcwd(), 'screenshots')
-    os.makedirs(screenshots_dir, exist_ok=True)
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
     filename = f"{prefix}_{timestamp}.png"
-    filepath = os.path.join(screenshots_dir, filename)
-    driver.save_screenshot(filepath)
-    # Log the screenshot
-    dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
+    filepath = os.path.join(SCREENSHOTS_DIR, filename)
+    try:
+        driver.save_screenshot(filepath)
+        # Log the screenshot
+        dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
+    except Exception as e:
+        dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id)
     return filename
 
 def post_comment_on_task(driver, task_url, comment_text, image_path=None, group_id=None):

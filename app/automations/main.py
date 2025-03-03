@@ -16,7 +16,7 @@ import json
 from chrome_extension_python import Extension
 from app.automations.comments import comment_on_some_tasks
 from app import data_manager as dm
-from config import Config
+from config import Config, SCREENSHOTS_DIR
 
 # ------------------------------
 # Basic user agents for stealth
@@ -62,13 +62,15 @@ class Capsolver(Extension):
 # ------------------------------
 def save_screenshot(driver, prefix, group_id):
     timestamp = int(time.time())
-    screenshots_dir = os.path.join(os.getcwd(), 'screenshots')
-    os.makedirs(screenshots_dir, exist_ok=True)
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
     filename = f"{prefix}_{timestamp}.png"
-    filepath = os.path.join(screenshots_dir, filename)
-    driver.save_screenshot(filepath)
-    # Log the screenshot
-    dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
+    filepath = os.path.join(SCREENSHOTS_DIR, filename)
+    try:
+        driver.save_screenshot(filepath)
+        # Log the screenshot
+        dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
+    except Exception as e:
+        dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id)
     return filename
 
 

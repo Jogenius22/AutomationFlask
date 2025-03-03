@@ -7,6 +7,7 @@ from werkzeug.utils import secure_filename
 from app.forms import AccountForm, CityForm, MessageForm, ScheduleForm, SettingsForm
 import app.data_manager as dm
 from app.tasks import start_bot_task
+from config import SCREENSHOTS_DIR
 
 bp = Blueprint('main', __name__)
 
@@ -403,33 +404,35 @@ def delete_schedule(schedule_id):
 @bp.route('/screenshots')
 def screenshots():
     # Get all PNG files from the screenshots directory
-    screenshots_dir = os.path.join(current_app.root_path, '..', 'screenshots')
-    os.makedirs(screenshots_dir, exist_ok=True)  # Ensure directory exists
+    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)  # Ensure directory exists
     
     screenshots = []
     
-    if os.path.exists(screenshots_dir):
+    if os.path.exists(SCREENSHOTS_DIR):
         # Get all PNG files with creation time
-        for filename in os.listdir(screenshots_dir):
+        for filename in os.listdir(SCREENSHOTS_DIR):
             if filename.lower().endswith('.png'):
                 filepath = os.path.join('/screenshot', filename)
-                created_at = datetime.datetime.fromtimestamp(
-                    os.path.getctime(os.path.join(screenshots_dir, filename))
-                )
-                
-                # Try to extract a descriptive name
-                name_parts = filename.split('_')
-                if len(name_parts) > 0:
-                    description = name_parts[0].replace('_', ' ').title()
-                else:
-                    description = "Screenshot"
+                try:
+                    created_at = datetime.datetime.fromtimestamp(
+                        os.path.getctime(os.path.join(SCREENSHOTS_DIR, filename))
+                    )
                     
-                screenshots.append({
-                    'filename': filename,
-                    'filepath': filepath,
-                    'created_at': created_at,
-                    'description': description
-                })
+                    # Try to extract a descriptive name
+                    name_parts = filename.split('_')
+                    if len(name_parts) > 0:
+                        description = name_parts[0].replace('_', ' ').title()
+                    else:
+                        description = "Screenshot"
+                        
+                    screenshots.append({
+                        'filename': filename,
+                        'filepath': filepath,
+                        'created_at': created_at,
+                        'description': description
+                    })
+                except Exception as e:
+                    current_app.logger.error(f"Error processing screenshot {filename}: {str(e)}")
         
         # Sort screenshots by creation time (newest first)
         screenshots.sort(key=lambda x: x['created_at'], reverse=True)
@@ -438,5 +441,4 @@ def screenshots():
 
 @bp.route('/screenshot/<filename>')
 def get_screenshot(filename):
-    screenshots_dir = os.path.join(current_app.root_path, '..', 'screenshots')
-    return send_from_directory(screenshots_dir, filename) 
+    return send_from_directory(SCREENSHOTS_DIR, filename) 

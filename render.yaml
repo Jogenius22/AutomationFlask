@@ -1,5 +1,5 @@
 # Render.yaml configuration for Airtasker Bot Manager
-# Updated configuration to avoid permission issues
+# Updated configuration with a different approach to avoid permission issues
 
 services:
   - type: web
@@ -16,7 +16,6 @@ services:
       apt-get update && apt-get install -y google-chrome-stable
       # Install Python dependencies
       pip install -r requirements.txt
-      # Create initial data structure in the code repo
       # Create startup script
       echo '#!/bin/bash
       # Start virtual display with Xvfb
@@ -45,6 +44,10 @@ services:
         value: "true" # Always use headless mode in production
       - key: CHROME_ARGS
         value: "--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-extensions"
+      - key: DATA_DIR
+        value: "/app/data"
+      - key: SCREENSHOTS_DIR
+        value: "/app/data/screenshots"
     disk:
       name: airtasker_data
       mountPath: /app/data
