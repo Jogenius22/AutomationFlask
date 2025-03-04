@@ -12,17 +12,18 @@ from config import SCREENSHOTS_DIR
 # Helper function to save screenshots
 def save_screenshot(driver, prefix, group_id):
     """Helper function to save screenshots to a consistent location"""
-    timestamp = int(time.time())
-    os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-    filename = f"{prefix}_{timestamp}.png"
-    filepath = os.path.join(SCREENSHOTS_DIR, filename)
     try:
+        timestamp = int(time.time())
+        os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+        filename = f"{prefix}_{timestamp}.png"
+        filepath = os.path.join(SCREENSHOTS_DIR, filename)
         driver.save_screenshot(filepath)
         # Log the screenshot
         dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
+        return filename
     except Exception as e:
         dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id)
-    return filename
+        return None
 
 def post_comment_on_task(driver, task_url, comment_text, image_path=None, group_id=None):
     """
