@@ -117,58 +117,122 @@ def login(driver, email, password,
           submit_button_xpath,
           group_id=None):
     try:
-        # Click the 'Login' button
-        dm.add_log(f"Clicking login button for {email}", "info", group_id=group_id)
-        # login_btn = driver.find_element(By.XPATH, login_button_xpath)
-        # login_btn.click()
+        # Navigate directly to login page instead of clicking login button
+        dm.add_log(f"Navigating directly to login page for {email}", "info", group_id=group_id)
         driver.get("https://www.airtasker.com/login")
-        time.sleep(random.uniform(2, 4))
+        
+        # Wait for login page to load properly
         time.sleep(random.uniform(7, 10))
         
         # Take screenshot of login page
         save_screenshot(driver, "login_page", group_id)
         
+        # IMPORTANT: Wait for the page to fully load and Capsolver to initialize
+        dm.add_log("Giving Capsolver time to initialize before entering credentials", "info", group_id=group_id)
+        time.sleep(random.uniform(15, 20))
+        
+        # Check for any captcha iframes that might be present
+        try:
+            recaptcha_frames = driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha')]")
+            if recaptcha_frames:
+                dm.add_log(f"Captcha detected before login. Giving extra time for Capsolver to process.", "info", group_id=group_id)
+                time.sleep(random.uniform(10, 15))
+        except Exception as e:
+            dm.add_log(f"Error checking for captcha: {str(e)}", "warning", group_id=group_id)
+        
         # Type the email
         dm.add_log(f"Typing email: {email}", "info", group_id=group_id)
-        email_field = driver.find_element(By.ID, email_input_id)
-        time.sleep(random.uniform(1, 2))
-        email_field.clear()
-        for c in email:
-            email_field.send_keys(c)
-            time.sleep(random.uniform(0.04, 0.2))
+        try:
+            email_field = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.ID, email_input_id))
+            )
+            email_field.clear()
+            for c in email:
+                email_field.send_keys(c)
+                time.sleep(random.uniform(0.04, 0.2))
+        except Exception as e:
+            dm.add_log(f"Error entering email: {str(e)}", "error", group_id=group_id)
+            save_screenshot(driver, "email_entry_error", group_id)
+            raise
 
         # Type the password
         dm.add_log("Typing password", "info", group_id=group_id)
-        password_field = driver.find_element(By.ID, password_input_id)
-        time.sleep(random.uniform(1, 2))
-        password_field.clear()
-        for c in password:
-            password_field.send_keys(c)
-            time.sleep(random.uniform(0.04, 0.15))
+        try:
+            password_field = driver.find_element(By.ID, password_input_id)
+            password_field.clear()
+            for c in password:
+                password_field.send_keys(c)
+                time.sleep(random.uniform(0.04, 0.15))
+        except Exception as e:
+            dm.add_log(f"Error entering password: {str(e)}", "error", group_id=group_id)
+            save_screenshot(driver, "password_entry_error", group_id)
+            raise
 
-        # (Captcha is solved automatically by the extension)
-        dm.add_log("Waiting for captcha to be solved automatically", "info", group_id=group_id)
-        time.sleep(random.uniform(2, 4))
+        # Wait longer for captcha to be solved automatically by the extension
+        dm.add_log("Waiting for captcha to be solved by Capsolver...", "info", group_id=group_id)
+        time.sleep(random.uniform(10, 15))
+        
+        # Take screenshot before clicking submit
+        save_screenshot(driver, "before_submit", group_id)
         
         # Submit the login form
-        dm.add_log("Submitting login form", "info", group_id=group_id)
-        submit_btn = driver.find_element(By.XPATH, submit_button_xpath)
-        submit_btn.click()
+        dm.add_log("Clicking the submit button", "info", group_id=group_id)
+        try:
+            # First try to find if button is clickable
+            submit_btn = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, submit_button_xpath))
+            )
+            submit_btn.click()
+            dm.add_log("Submit button clicked", "info", group_id=group_id)
+        except Exception as e:
+            dm.add_log(f"Error clicking submit button: {str(e)}", "warning", group_id=group_id)
+            save_screenshot(driver, "submit_error", group_id)
+            
+            # Try JavaScript click as fallback
+            try:
+                dm.add_log("Trying JavaScript click instead", "info", group_id=group_id)
+                submit_btn = driver.find_element(By.XPATH, submit_button_xpath)
+                driver.execute_script("arguments[0].click();", submit_btn)
+                dm.add_log("JavaScript click successful", "info", group_id=group_id)
+            except Exception as js_e:
+                dm.add_log(f"JavaScript click also failed: {str(js_e)}", "error", group_id=group_id)
+                raise
         
-        # Wait for post-login redirect
-        time.sleep(random.uniform(10, 15))
+        # Wait longer for post-login redirect
+        dm.add_log("Waiting for login to complete...", "info", group_id=group_id)
+        time.sleep(random.uniform(15, 20))
         
         # Take screenshot after login
         save_screenshot(driver, "post_login", group_id)
         
-        # Check if the current URL is the expected discover page
-        if driver.current_url != "https://www.airtasker.com/discover/" and "https://www.airtasker.com/" not in driver.current_url:
-            save_screenshot(driver, "login_error", group_id)
-            dm.add_log(f"Login failed: Did not redirect to expected page. Current URL: {driver.current_url}", "error", group_id=group_id)
-            raise Exception(f"Login failed: Did not redirect to expected page. Current URL: {driver.current_url}")
+        # Check if login was successful by checking for URLs and also avatar element
+        avatar_xpath = '//*[@id="overlay-provider"]/nav/div[2]/div/div/div/div[2]/button/div/div'
+        login_success = False
         
-        dm.add_log("Login successful", "info", group_id=group_id)
-        return True
+        # First check URL
+        if "airtasker.com/discover/" in driver.current_url or "airtasker.com/tasks/" in driver.current_url:
+            dm.add_log("Login successful based on URL redirect", "info", group_id=group_id)
+            login_success = True
+        
+        # Try to find avatar element as additional verification
+        try:
+            avatar_element = WebDriverWait(driver, 5).until(
+                EC.presence_of_element_located((By.XPATH, avatar_xpath))
+            )
+            dm.add_log("Login confirmed - user avatar found", "info", group_id=group_id)
+            login_success = True
+        except:
+            dm.add_log("Could not find avatar element, but URL check already performed", "warning", group_id=group_id)
+        
+        if login_success:
+            dm.add_log("Login successful", "success", group_id=group_id)
+            return True
+        else:
+            current_url = driver.current_url
+            dm.add_log(f"Login verification failed. Current URL: {current_url}", "error", group_id=group_id)
+            save_screenshot(driver, "login_verification_failed", group_id)
+            raise Exception(f"Login failed: Did not redirect to expected page. Current URL: {current_url}")
+        
     except Exception as e:
         save_screenshot(driver, "login_error", group_id)
         dm.add_log(f"Login error: {str(e)}", "error", group_id=group_id)

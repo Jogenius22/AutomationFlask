@@ -42,9 +42,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app code
 COPY . .
 
-# Create data directory structure
-RUN mkdir -p data/screenshots data/logs \
-    && chmod -R 777 data
+# Create persistent data directory structure
+# This directory will be mounted as a volume in production
+RUN mkdir -p /app/data/screenshots /app/data/logs /app/data/uploads \
+    && chmod -R 777 /app/data
 
 # Set environment variables
 ENV FLASK_APP=app
@@ -54,22 +55,46 @@ ENV PYTHONUNBUFFERED=1
 ENV SELENIUM_HEADLESS=true
 # Chrome flags for better extension support in headless mode
 ENV CHROME_ARGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-web-security --allow-running-insecure-content --window-size=1920,1080"
+# Ensure proper paths
 ENV DATA_DIR=/app/data
-ENV SCREENSHOTS_DIR=/app/data/screenshots
 
-# Create startup script
+# Create startup script with improved error handling and data directory checks
 RUN echo '#!/bin/bash\n\
+# Print environment for debugging\n\
+echo "Starting container with data directory: $DATA_DIR"\n\
+\n\
+# Ensure data directories exist and have correct permissions\n\
+mkdir -p "$DATA_DIR/screenshots" "$DATA_DIR/logs" "$DATA_DIR/uploads"\n\
+chmod -R 777 "$DATA_DIR"\n\
+echo "Data directory structure verified"\n\
+\n\
 # Clean any defunct Chrome processes\n\
 pkill -9 chrome || true\n\
+\n\
 # Clear browser cache\n\
 rm -rf /tmp/* /tmp/.* 2>/dev/null || true\n\
 rm -rf ~/.config/google-chrome/ 2>/dev/null || true\n\
+\n\
+# Test data directory is writable\n\
+TEST_FILE="$DATA_DIR/startup_test.txt"\n\
+if touch "$TEST_FILE"; then\n\
+    echo "$(date) - Container startup" > "$TEST_FILE"\n\
+    echo "Data directory is writable"\n\
+    rm "$TEST_FILE"\n\
+else\n\
+    echo "ERROR: Data directory is not writable!"\n\
+fi\n\
+\n\
 # Start virtual display with standard resolution\n\
+echo "Starting Xvfb virtual display"\n\
 Xvfb :99 -screen 0 1920x1080x16 -ac > /dev/null 2>&1 &\n\
+\n\
 # Give Xvfb time to start\n\
 sleep 3\n\
+\n\
 # Start the Flask application with gunicorn\n\
-gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 180 "run:app"\n\
+echo "Starting Flask application with Gunicorn"\n\
+exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 180 "run:app"\n\
 ' > /app/startup.sh \
     && chmod +x /app/startup.sh
 
