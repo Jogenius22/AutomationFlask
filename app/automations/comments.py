@@ -7,16 +7,46 @@ from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from app import data_manager as dm
-from config import SCREENSHOTS_DIR
+
+# ------------------------------
+# 1) COMMENT TEMPLATES
+# ------------------------------
+RAW_MESSAGES = [
+    # Message 1
+    "Hey did you know there is another jobs application called ?????Tasker (Replace ????? with Smart, all one word with less fees. you are more likely to get better quotes.",
+    # Message 2
+    "Hey just thought I would mention that you will likely find better quotes on the new S___Tasker application (insert the word Smart, all one word). fees are 25% less.",
+    # Message 3
+    "Hi for this task you might want to post on *****Tasker ( Insert the word *Smart*, all one word). The fees are less so we can give you better quotes",
+    # Message 4
+    "Hey probably a good idea to poston the new Smart______ application. (insert the word Tasker, all one word.) You will get more quotes. And the fees are much less!",
+    # Message 5
+    "By the way you might get better quotes with posting to the Smart/ / / / / / application. (Replace / / / / / with Tasker, all one word) better fees for all users and more options."
+]
+
+def pick_random_comment():
+    """
+    Picks a random comment template and does placeholder replacements.
+    """
+    template = random.choice(RAW_MESSAGES)
+    final = (template
+             .replace("?????", "Smart")
+             .replace("___", "mart")
+             .replace("*****", "Smart")
+             .replace("______", "Tasker")
+             .replace("/ / / / / /", "Tasker")
+             )
+    return final
 
 # Helper function to save screenshots
 def save_screenshot(driver, prefix, group_id):
     """Helper function to save screenshots to a consistent location"""
     try:
         timestamp = int(time.time())
-        os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+        screenshots_dir = os.path.join(os.getcwd(), 'screenshots')
+        os.makedirs(screenshots_dir, exist_ok=True)
         filename = f"{prefix}_{timestamp}.png"
-        filepath = os.path.join(SCREENSHOTS_DIR, filename)
+        filepath = os.path.join(screenshots_dir, filename)
         driver.save_screenshot(filepath)
         # Log the screenshot
         dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
@@ -25,7 +55,7 @@ def save_screenshot(driver, prefix, group_id):
         dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id)
         return None
 
-def post_comment_on_task(driver, task_url, comment_text, image_path=None, group_id=None):
+def post_comment_on_task(driver, task_url, comment_text=None, image_path=None, group_id=None):
     """
     Navigates to the given task URL, posts the provided comment,
     optionally attaches an image, and clicks 'Send'.
@@ -37,6 +67,10 @@ def post_comment_on_task(driver, task_url, comment_text, image_path=None, group_
     # Take screenshot of task page
     save_screenshot(driver, "task_page", group_id)
 
+    # If no comment text provided, use random template
+    if not comment_text:
+        comment_text = pick_random_comment()
+        
     dm.add_log(f"Using comment: {comment_text}", "info", group_id=group_id)
 
     # XPaths for the comment textarea and the 'Send' button
@@ -91,7 +125,7 @@ def post_comment_on_task(driver, task_url, comment_text, image_path=None, group_
         dm.add_log(f"Comment box or Send button not found: {str(e)}", "error", group_id=group_id)
         save_screenshot(driver, "comment_error", group_id)
 
-def comment_on_some_tasks(driver, tasks, comment_text, max_to_post=3, image_path=None, group_id=None):
+def comment_on_some_tasks(driver, tasks, message_content=None, max_to_post=3, image_path=None, group_id=None):
     """
     Given a list of task dicts (each with a 'link'),
     posts the provided comment on up to 'max_to_post' tasks.
@@ -111,7 +145,7 @@ def comment_on_some_tasks(driver, tasks, comment_text, max_to_post=3, image_path
             continue
             
         dm.add_log(f"Starting comment {i}/{len(tasks_to_comment)}: {t.get('title', 'Unknown Title')}", "info", group_id=group_id)
-        post_comment_on_task(driver, link, comment_text, image_path=image_path, group_id=group_id)
+        post_comment_on_task(driver, link, message_content, image_path=image_path, group_id=group_id)
         
         # Wait between commenting on tasks
         if i < len(tasks_to_comment):

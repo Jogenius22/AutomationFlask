@@ -16,7 +16,6 @@ import json
 from chrome_extension_python import Extension
 from app.automations.comments import comment_on_some_tasks
 from app import data_manager as dm
-from config import Config, SCREENSHOTS_DIR
 
 # ------------------------------
 # Basic user agents for stealth
@@ -61,18 +60,15 @@ class Capsolver(Extension):
 # Helper function for screenshots
 # ------------------------------
 def save_screenshot(driver, prefix, group_id):
-    try:
-        timestamp = int(time.time())
-        os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
-        filename = f"{prefix}_{timestamp}.png"
-        filepath = os.path.join(SCREENSHOTS_DIR, filename)
-        driver.save_screenshot(filepath)
-        # Log the screenshot
-        dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
-        return filename
-    except Exception as e:
-        dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id)
-        return None
+    timestamp = int(time.time())
+    screenshots_dir = os.path.join(os.getcwd(), 'screenshots')
+    os.makedirs(screenshots_dir, exist_ok=True)
+    filename = f"{prefix}_{timestamp}.png"
+    filepath = os.path.join(screenshots_dir, filename)
+    driver.save_screenshot(filepath)
+    # Log the screenshot
+    dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
+    return filename
 
 
 # ------------------------------
@@ -85,32 +81,16 @@ def init_driver(headless=False):
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--disable-infobars")
     
-    # Extension support settings
-    chrome_options.add_argument("--enable-extensions")
-    chrome_options.add_argument("--disable-web-security")
-    chrome_options.add_argument("--allow-running-insecure-content")
-    
-    # Add headless mode and related flags only if specified
+    # Add headless mode only if specified
     if headless:
         chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--window-size=1920,1080")
         chrome_options.add_argument("--start-maximized")
         chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--disable-gpu")
         
-        # Add environment Chrome args if available
-        chrome_args = os.environ.get('CHROME_ARGS', '')
-        if chrome_args:
-            for arg in chrome_args.split():
-                if arg not in chrome_options.arguments:
-                    chrome_options.add_argument(arg)
-    
-    # Load the captcha solver extension
-    capsolver_api_key = os.environ.get('CAPSOLVER_API_KEY', 'CAP-F79C6D0E7A810348A201783E25287C6003CFB45BBDCB670F96E525E7C0132148')
-    dm.add_log(f"Initializing Capsolver extension (API key length: {len(capsolver_api_key)})", "info")
+    # Load the captcha solver extension (this extension will handle reCAPTCHA automatically)
     chrome_options.add_argument(
-        Capsolver(capsolver_api_key).load()
+        Capsolver("CAP-F79C6D0E7A810348A201783E25287C6003CFB45BBDCB670F96E525E7C0132148").load()
     )
 
     # Install chromedriver if not present
@@ -124,14 +104,11 @@ def init_driver(headless=False):
     # Additional stealth settings that work in both headless and regular mode
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
-    # Set page load timeout
-    driver.set_page_load_timeout(60)
-    
     return driver
 
 
 # ------------------------------
-# Login function with better verification
+# Login function with URL check
 # ------------------------------
 def login(driver, email, password,
           login_button_xpath,
@@ -139,146 +116,63 @@ def login(driver, email, password,
           password_input_id,
           submit_button_xpath,
           group_id=None):
-    max_retries = 3
-    retry_count = 0
-    
-    # XPath for the avatar that appears when logged in (kept for verification)
-    avatar_xpath = '//*[@id="overlay-provider"]/nav/div[2]/div/div/div/div[2]/button/div/div'
-    
-    # XPath for the reCAPTCHA iframe
-    recaptcha_iframe_xpath = "//iframe[contains(@title, 'recaptcha')]"
-    
-    while retry_count < max_retries:
-        try:
-            if retry_count > 0:
-                dm.add_log(f"Retry login attempt {retry_count}/{max_retries}", "info", group_id=group_id)
-                driver.delete_all_cookies()
-                driver.get("about:blank")
-                time.sleep(random.uniform(2, 3))
-                
-            # Navigate directly to login page instead of clicking login button
-            dm.add_log(f"Navigating to login page for {email}", "info", group_id=group_id)
-            driver.get("https://www.airtasker.com/login")
-            time.sleep(random.uniform(5, 8))
-            
-            # Take screenshot of login page
-            save_screenshot(driver, "login_page", group_id)
-            
-            # IMPORTANT: Wait for Capsolver to begin working by giving it time to detect the captcha
-            dm.add_log("Waiting for Capsolver to detect captcha before entering credentials", "info", group_id=group_id)
-            time.sleep(random.uniform(10, 15))
-            
-            # Type the email
-            dm.add_log(f"Typing email", "info", group_id=group_id)
-            email_field = driver.find_element(By.ID, email_input_id)
-            time.sleep(random.uniform(1, 2))
-            email_field.clear()
-            for c in email:
-                email_field.send_keys(c)
-                time.sleep(random.uniform(0.04, 0.2))
+    try:
+        # Click the 'Login' button
+        dm.add_log(f"Clicking login button for {email}", "info", group_id=group_id)
+        # login_btn = driver.find_element(By.XPATH, login_button_xpath)
+        # login_btn.click()
+        driver.get("https://www.airtasker.com/login")
+        time.sleep(random.uniform(2, 4))
+        time.sleep(random.uniform(7, 10))
+        
+        # Take screenshot of login page
+        save_screenshot(driver, "login_page", group_id)
+        
+        # Type the email
+        dm.add_log(f"Typing email: {email}", "info", group_id=group_id)
+        email_field = driver.find_element(By.ID, email_input_id)
+        time.sleep(random.uniform(1, 2))
+        email_field.clear()
+        for c in email:
+            email_field.send_keys(c)
+            time.sleep(random.uniform(0.04, 0.2))
 
-            # Type the password
-            dm.add_log("Typing password", "info", group_id=group_id)
-            password_field = driver.find_element(By.ID, password_input_id)
-            time.sleep(random.uniform(1, 2))
-            password_field.clear()
-            for c in password:
-                password_field.send_keys(c)
-                time.sleep(random.uniform(0.04, 0.15))
+        # Type the password
+        dm.add_log("Typing password", "info", group_id=group_id)
+        password_field = driver.find_element(By.ID, password_input_id)
+        time.sleep(random.uniform(1, 2))
+        password_field.clear()
+        for c in password:
+            password_field.send_keys(c)
+            time.sleep(random.uniform(0.04, 0.15))
 
-            # Captcha should be solved automatically by the extension
-            # We need to explicitly wait for the captcha to be solved
-            dm.add_log("Waiting for captcha to be solved by Capsolver...", "info", group_id=group_id)
-            captcha_wait_time = 30  # Give up to 30 seconds for solving
-            captcha_solved = False
-            start_time = time.time()
-            
-            while time.time() - start_time < captcha_wait_time:
-                # Check if the reCAPTCHA iframe is still present
-                try:
-                    recaptcha_frames = driver.find_elements(By.XPATH, recaptcha_iframe_xpath)
-                    if not recaptcha_frames:
-                        dm.add_log("Captcha appears to be solved (iframe no longer present)", "info", group_id=group_id)
-                        captcha_solved = True
-                        break
-                except:
-                    # If error finding frames, we'll assume it might be solved
-                    pass
-                
-                # Take periodic screenshots to monitor captcha progress
-                if (time.time() - start_time) % 10 < 1:  # Every ~10 seconds
-                    save_screenshot(driver, "captcha_progress", group_id)
-                
-                time.sleep(1)  # Check every second
-            
-            if not captcha_solved:
-                dm.add_log("WARNING: Not certain if captcha was solved. Will try to continue.", "warning", group_id=group_id)
-            
-            # Wait a bit more before clicking submit to ensure captcha is completely processed
-            time.sleep(random.uniform(3, 5))
-            save_screenshot(driver, "before_submit", group_id)
-            
-            # Submit the login form
-            dm.add_log("Submitting login form", "info", group_id=group_id)
-            try:
-                # Use WebDriverWait to wait for the submit button to be clickable
-                submit_btn = WebDriverWait(driver, 10).until(
-                    EC.element_to_be_clickable((By.XPATH, submit_button_xpath))
-                )
-                submit_btn.click()
-                dm.add_log("Clicked submit button", "info", group_id=group_id)
-            except Exception as e:
-                dm.add_log(f"Error clicking submit button: {str(e)}", "error", group_id=group_id)
-                save_screenshot(driver, "submit_error", group_id)
-                
-                # Try JavaScript click as fallback
-                try:
-                    dm.add_log("Trying JavaScript click as fallback", "info", group_id=group_id)
-                    submit_btn = driver.find_element(By.XPATH, submit_button_xpath)
-                    driver.execute_script("arguments[0].click();", submit_btn)
-                    dm.add_log("JavaScript click successful", "info", group_id=group_id)
-                except Exception as js_error:
-                    dm.add_log(f"JavaScript click also failed: {str(js_error)}", "error", group_id=group_id)
-                    raise
-            
-            # Wait for post-login redirect
-            time.sleep(random.uniform(15, 20))
-            
-            # Take screenshot after login
-            save_screenshot(driver, "post_login", group_id)
-            
-            # Check for avatar element to verify login success
-            try:
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.XPATH, avatar_xpath))
-                )
-                dm.add_log("Login successful - avatar element found", "info", group_id=group_id)
-                return True
-            except Exception as e:
-                # If avatar not found, check URL as a fallback
-                if "airtasker.com" in driver.current_url and ("/login" not in driver.current_url):
-                    dm.add_log(f"Login seems successful based on URL: {driver.current_url}", "info", group_id=group_id)
-                    return True
-                else:
-                    save_screenshot(driver, "login_verification_error", group_id)
-                    error_msg = f"Login failed verification. Current URL: {driver.current_url}, error: {str(e)}"
-                    dm.add_log(error_msg, "error", group_id=group_id)
-                    
-                    if retry_count < max_retries - 1:
-                        retry_count += 1
-                        continue
-                    else:
-                        raise Exception(error_msg)
-            
-        except Exception as e:
+        # (Captcha is solved automatically by the extension)
+        dm.add_log("Waiting for captcha to be solved automatically", "info", group_id=group_id)
+        time.sleep(random.uniform(2, 4))
+        
+        # Submit the login form
+        dm.add_log("Submitting login form", "info", group_id=group_id)
+        submit_btn = driver.find_element(By.XPATH, submit_button_xpath)
+        submit_btn.click()
+        
+        # Wait for post-login redirect
+        time.sleep(random.uniform(10, 15))
+        
+        # Take screenshot after login
+        save_screenshot(driver, "post_login", group_id)
+        
+        # Check if the current URL is the expected discover page
+        if driver.current_url != "https://www.airtasker.com/discover/" and "https://www.airtasker.com/" not in driver.current_url:
             save_screenshot(driver, "login_error", group_id)
-            dm.add_log(f"Login error: {str(e)}", "error", group_id=group_id)
-            
-            if retry_count < max_retries - 1:
-                retry_count += 1
-                time.sleep(random.uniform(5, 10))  # Wait before retrying
-            else:
-                raise  # Re-raise the last exception after all retries fail
+            dm.add_log(f"Login failed: Did not redirect to expected page. Current URL: {driver.current_url}", "error", group_id=group_id)
+            raise Exception(f"Login failed: Did not redirect to expected page. Current URL: {driver.current_url}")
+        
+        dm.add_log("Login successful", "info", group_id=group_id)
+        return True
+    except Exception as e:
+        save_screenshot(driver, "login_error", group_id)
+        dm.add_log(f"Login error: {str(e)}", "error", group_id=group_id)
+        raise
 
 
 # ------------------------------
@@ -458,7 +352,7 @@ def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_
         comment_on_some_tasks(driver, tasks, message_content, max_to_post=max_posts, image_path=None, group_id=group_id)
         
         save_screenshot(driver, "completed", group_id)
-        dm.add_log("Bot completed successfully", "success", group_id=group_id)
+        dm.add_log("Bot task completed successfully", "success", group_id=group_id)
         return True, "Bot completed successfully"
 
     except Exception as e:
