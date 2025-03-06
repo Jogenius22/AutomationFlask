@@ -253,43 +253,33 @@ def add_log(message, level='info', group_id=None, category='automation'):
         dict: The log entry that was added
     """
     try:
-        # Load existing logs or create empty list
         logs = _read_file_with_retry(LOGS_FILE)
-        
-        # Sanitize message for JSON compatibility
+
         if message is not None:
-            # Limit message length
             message = str(message)[:2000]
-            # Replace control characters that would break JSON
             message = ''.join(c if ord(c) >= 32 or c in '\n\r\t' else ' ' for c in message)
-        
-        # Create new log entry
+
         log_entry = {
             'id': str(uuid.uuid4()),
             'message': message,
             'level': level,
             'category': category,
-            'timestamp': datetime.datetime.now()
+            'timestamp': datetime.datetime.now().isoformat()
         }
-        
-        # Add group_id if provided
+
         if group_id:
             log_entry['group_id'] = group_id
-        
-        # Append new log
+
         logs.append(log_entry)
-        
-        # Sort logs by timestamp (newest first)
-        logs = sorted(logs, key=lambda x: x.get('timestamp', ''), reverse=True)
-        
-        # Keep only the last 1000 logs to prevent file growth
+
+        logs.sort(key=lambda x: datetime.datetime.fromisoformat(x['timestamp']), reverse=True)
+
         logs = logs[:1000]
-        
-        # Write logs back to file
+
         success = _write_file_with_retry(LOGS_FILE, logs, default=datetime_converter)
         if not success:
             print(f"WARNING: Could not save log: {message[:50]}...")
-        
+
         return log_entry
     except Exception as e:
         print(f"Error adding log: {str(e)}")
@@ -298,7 +288,7 @@ def add_log(message, level='info', group_id=None, category='automation'):
             'message': f"Error adding log: {str(e)}",
             'level': 'error',
             'category': 'essential',
-            'timestamp': datetime.datetime.now()
+            'timestamp': datetime.datetime.now().isoformat()
         }
 
 def get_settings():

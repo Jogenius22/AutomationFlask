@@ -226,60 +226,30 @@ def clear_chrome_cache():
 # ------------------------------
 def get_chrome_options():
     """
-    Configure Chrome options with proper settings for stability
+    Configure Chrome options with optimized settings for stability and reduced memory usage
     """
-    # Pick a random user agent
     user_agent = random.choice(USER_AGENTS)
-    
-    # Get additional Chrome arguments from environment, if any
-    chrome_args = os.environ.get('CHROME_ARGS', '')
-    
+
     chrome_options = Options()
-    # Set user agent
     chrome_options.add_argument(f"--user-agent={user_agent}")
-    
-    # Anti-detection settings
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--disable-infobars")
-    
-    # Basic stability options
-    chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
-    
-    # Use a custom temporary directory for crash dumps
-    chrome_tmp_dir = '/tmp/chrome'
-    if not os.path.exists(chrome_tmp_dir):
-        os.makedirs(chrome_tmp_dir, exist_ok=True)
-    chrome_options.add_argument(f"--crash-dumps-dir={chrome_tmp_dir}")
-    chrome_options.add_argument(f"--user-data-dir={chrome_tmp_dir}/profile")
-    
-    # Set a fixed window size for consistency
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--window-size=1280,800")
-    
-    # Enable remote debugging on a fixed port
-    chrome_options.add_argument("--remote-debugging-port=9222")
-    
-    # Better memory management
-    chrome_options.add_argument("--aggressive-cache-discard")
-    chrome_options.add_argument("--disable-application-cache")
-    chrome_options.add_argument("--disable-offline-load-stale-cache")
-    chrome_options.add_argument("--disk-cache-size=0")
-    chrome_options.add_argument("--media-cache-size=0")
-    
-    # Add arguments from environment
-    if chrome_args:
-        for arg in chrome_args.split():
-            if arg.strip():
-                chrome_options.add_argument(arg.strip())
-    
-    # Check if we should run in headless mode
-    headless = os.environ.get('SELENIUM_HEADLESS', 'false').lower() in ('true', '1', 'yes')
-    if headless:
-        # Use new headless mode for better compatibility
-        chrome_options.add_argument("--headless=new")
-        logger.info("Chrome configured to run in headless mode")
-    
+    chrome_options.add_argument("--disable-extensions")
+    chrome_options.add_argument("--disable-background-networking")
+    chrome_options.add_argument("--disable-sync")
+    chrome_options.add_argument("--disable-default-apps")
+    chrome_options.add_argument("--disable-translate")
+    chrome_options.add_argument("--hide-scrollbars")
+    chrome_options.add_argument("--metrics-recording-only")
+    chrome_options.add_argument("--mute-audio")
+    chrome_options.add_argument("--no-first-run")
+    chrome_options.add_argument("--safebrowsing-disable-auto-update")
+
     return chrome_options
 
 
