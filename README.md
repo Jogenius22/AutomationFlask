@@ -1,139 +1,130 @@
-# Airtasker Bot Manager
+# Automation Flask
 
-A simplified Flask application for managing automated Airtasker comments.
+A Flask-based web application for managing and running Selenium automation tasks, specifically designed for Airtasker automation.
 
 ## Features
 
-- Manage Airtasker accounts
-- Define target cities and radius
-- Create and store message templates
-- Schedule automated commenting
-- View detailed activity logs
-- Simple JSON-based storage (no database required)
-- Selenium-based automation with CAPTCHA solving
+- Web interface for managing automation accounts, cities, and messages
+- Scheduling system for automated tasks
+- Selenium-based automation with Capsolver integration for CAPTCHA solving
+- Comprehensive testing framework
+
+## Installation
+
+1. Clone the repository:
+
+```bash
+git clone https://github.com/Jogenius22/AutomationFlask.git
+cd AutomationFlask
+```
+
+2. Create and activate a virtual environment:
+
+```bash
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+```
+
+3. Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+4. Set up environment variables (optional):
+
+```bash
+export FLASK_APP=wsgi.py
+export FLASK_ENV=development
+export CAPSOLVER_API_KEY=your_api_key_here  # Optional, default key is provided
+```
+
+## Running the Application
+
+### Development Mode
+
+```bash
+python -m flask run
+```
+
+### Production Mode with Gunicorn
+
+```bash
+gunicorn wsgi:app
+```
+
+## Testing the Automation
+
+The project includes a comprehensive testing framework to verify the automation functionality:
+
+```bash
+python test_automation.py
+```
+
+This will run tests for:
+
+- Driver initialization
+- Capsolver extension loading
+- Airtasker login page access
+- Full automation flow (without submitting credentials)
 
 ## Project Structure
 
-```
-.
-├── app/                    # Application package
-│   ├── __init__.py         # App factory
-│   ├── automations/        # Automation scripts
-│   │   ├── main.py         # Main selenium automation
-│   │   └── comments.py     # Comment automation
-│   ├── static/             # Static files (CSS, JS)
-│   │   ├── css/
-│   │   │   └── styles.css
-│   │   ├── js/
-│   │   │   └── scripts.js
-│   │   └── uploads/        # Image uploads directory
-│   ├── templates/          # Jinja2 templates
-│   │   ├── base.html       # Base template
-│   │   ├── accounts.html   # Account management
-│   │   ├── cities.html     # City management
-│   │   ├── dashboard.html  # Main dashboard
-│   │   ├── logs.html       # Activity logs
-│   │   ├── messages.html   # Message templates
-│   │   └── schedules.html  # Scheduling
-│   ├── data_manager.py     # JSON data storage
-│   ├── forms.py            # Form definitions
-│   ├── routes.py           # Route handlers
-│   └── tasks.py            # Background task handling
-├── config.py               # Configuration settings
-├── data/                   # JSON data storage directory
-├── run.py                  # Application entry point
-├── requirements.txt        # Project dependencies
-├── .env                    # Environment variables (optional)
-└── README.md               # This documentation
-```
+- `app/` - Main application code
+  - `automations/` - Selenium automation scripts
+    - `main.py` - Core automation functionality
+    - `comments.py` - Comment posting functionality
+  - `templates/` - Flask HTML templates
+  - `static/` - CSS, JavaScript, and other static files
+  - `routes.py` - Flask routes
+  - `data_manager.py` - Data management utilities
+- `data/` - Data storage directory
+  - `logs/` - Log files
+  - `screenshots/` - Automation screenshots
+- `test_automation.py` - Automation testing script
 
-## Getting Started
+## Automation Features
 
-### Prerequisites
+The automation system includes:
 
-- Python 3.7 or later
-- Chrome browser (for Selenium automation)
+1. **Robust WebDriver Initialization**:
 
-### Installation
+   - Automatic ChromeDriver installation
+   - Headless mode support
+   - Cleanup of stray Chrome processes
 
-1. Clone this repository:
+2. **Captcha Solving**:
 
-   ```
-   git clone https://github.com/yourusername/airtasker-bot.git
-   cd airtasker-bot
-   ```
+   - Integration with Capsolver extension
+   - Automatic handling of reCAPTCHA challenges
 
-2. Create a virtual environment:
+3. **Login Functionality**:
 
-   ```
-   python -m venv venv
-   ```
+   - Secure credential handling
+   - Detailed logging and error handling
 
-3. Activate the virtual environment:
+4. **Task Interaction**:
+   - Commenting on tasks
+   - Location-based filtering
 
-   - Windows: `venv\Scripts\activate`
-   - Unix/MacOS: `source venv/bin/activate`
+## Troubleshooting
 
-4. Install dependencies:
+### Chrome Process Issues
 
-   ```
-   pip install -r requirements.txt
-   ```
+If you encounter issues with Chrome processes not closing properly:
 
-5. Run the application:
+```bash
+# On macOS/Linux
+pkill -f chrome
 
-   ```
-   python run.py
-   ```
-
-   Or with Flask:
-
-   ```
-   export FLASK_APP=run.py
-   export FLASK_ENV=development
-   flask run
-   ```
-
-6. Access the application at `http://localhost:5000`
-
-## Configuration
-
-The application uses a simple JSON-based storage system that doesn't require a database. All data is stored in JSON files in the `data/` directory.
-
-### Environment Variables
-
-You can customize the application by creating a `.env` file:
-
-```
-FLASK_APP=run.py
-FLASK_ENV=development
-SECRET_KEY=your-secret-key
-CAPSOLVER_API_KEY=your-capsolver-api-key
+# On Windows
+taskkill /F /IM chrome.exe
 ```
 
-## Usage
+### Log Files
 
-1. **Add Accounts**: Create accounts with your Airtasker login credentials
-2. **Define Cities**: Add cities where you want to comment
-3. **Create Messages**: Write template messages to post on tasks
-4. **Start Bot**: From the dashboard, select an account, city, and message to start commenting
-
-## Deployment
-
-For production deployment, you can use Gunicorn or Waitress:
-
-```
-# Using Gunicorn (Linux/Mac)
-gunicorn -w 2 -b 0.0.0.0:5000 run:app
-
-# Using Waitress (Windows/Mac/Linux)
-waitress-serve --port=5000 run:app
-```
+Check the log files in the `data/logs` directory for detailed error information.
 
 ## License
 
-This project is for private use only.
-
-## Notes on CAPTCHA Solving
-
-The application uses the CapSolver extension for solving CAPTCHA challenges. You'll need a valid API key from [CapSolver](https://capsolver.com/) to use this functionality. Set it in the `.env` file as `CAPSOLVER_API_KEY`.
+This project is proprietary and confidential. Unauthorized copying, distribution, or use is strictly prohibited.
