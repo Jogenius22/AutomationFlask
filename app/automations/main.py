@@ -662,146 +662,84 @@ def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_
     """Run the Airtasker bot with the given parameters"""
     driver = None
     result = {"status": "error", "message": "Initialization failed"}
-    
+
     try:
-        # Determine environment and set paths accordingly
         is_gcp = os.getenv('GAE_ENV', '').startswith('standard')
         is_cloud = bool(os.getenv('CLOUD_ENV', False))
         is_docker = os.path.exists('/.dockerenv')
-        
-        # Use /tmp for cloud environments, otherwise use configured paths
-        if is_gcp or is_cloud or is_docker:
-            base_dir = '/tmp'
-        else:
-            base_dir = os.getenv('DATA_DIR', os.path.join(os.getcwd(), 'data'))
-        
-        # Set log and screenshot directories
+
+        base_dir = '/tmp' if is_gcp or is_cloud or is_docker else os.getenv('DATA_DIR', os.path.join(os.getcwd(), 'data'))
+
         logs_dir = os.path.join(base_dir, 'logs')
         screenshot_dir = os.path.join(base_dir, 'screenshots')
-        
-        # Create directories with error handling
-        try:
-            if not os.path.exists(logs_dir):
-                os.makedirs(logs_dir, exist_ok=True)
-                print(f"Created logs directory: {logs_dir}")
-        except Exception as e:
-            print(f"Warning: Could not create logs directory {logs_dir}: {str(e)}")
-            # Fallback to /tmp or current dir
-            logs_dir = '/tmp' if is_gcp or is_cloud else os.getcwd()
-            
-        try:
-            if not os.path.exists(screenshot_dir):
-                os.makedirs(screenshot_dir, exist_ok=True)
-                print(f"Created screenshots directory: {screenshot_dir}")
-        except Exception as e:
-            print(f"Warning: Could not create screenshots directory {screenshot_dir}: {str(e)}")
-            # Fallback to /tmp or current dir
-            screenshot_dir = '/tmp' if is_gcp or is_cloud else os.getcwd()
-        
-        # Set environment variables for other functions to use
+
+        os.makedirs(logs_dir, exist_ok=True)
+        os.makedirs(screenshot_dir, exist_ok=True)
+
         os.environ['LOG_DIR'] = logs_dir
         os.environ['SCREENSHOT_DIR'] = screenshot_dir
-        
+
         print(f"Starting Airtasker bot for {email} targeting {city_name}")
         print(f"Using directories: LOGS={logs_dir}, SCREENSHOTS={screenshot_dir}")
-        
-        # Initialize the driver with proper error handling
+
         driver = init_driver(group_id)
         if not driver:
             return {"status": "error", "message": "Driver initialization failed"}
 
-        # Navigate to Airtasker website
         driver.get("https://www.airtasker.com/")
         time.sleep(random.uniform(5, 8))
-        
-        # Take a screenshot of the initial page
+
         save_screenshot(driver, "initial_page", group_id)
-        
-        # Credentials and login XPaths
+
         login_button_xpath = '//*[@id="airtasker-app"]/nav/div[2]/div/div/div/div[2]/a[2]'
         email_input_id = "username"
         password_input_id = "password"
         submit_button_xpath = "/html/body/main/section/div/div/div/form/div[2]/button"
-        
-        # Login to Airtasker
-        try:
-            login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath)
-            print("Login successful")
-        except Exception as e:
-            error_msg = f"Login failed: {str(e)}"
-            print(error_msg)
-            return {"status": "error", "message": error_msg}
-        
-        # Navigate to tasks page
+
+        login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath)
+        print("Login successful")
+
         tasks_page_url = "https://www.airtasker.com/tasks"
         driver.get(tasks_page_url)
         time.sleep(random.uniform(5, 8))
-        
-        # Set location filter
-        try:
-            set_location_filter(driver, city_name, 100)
-            print(f"Location filter set to {city_name}")
-        except Exception as e:
-            print(f"Warning: Failed to set location filter: {str(e)}")
-            # Continue anyway as this is not critical
-        
-        # Scrape tasks
+
+        set_location_filter(driver, city_name, 100)
+        print(f"Location filter set to {city_name}")
+
         task_container_xpath = '//a[@data-ui-test="task-list-item" and @data-task-id]'
         title_xpath = './/p[contains(@class,"TaskCard__StyledTitle")]'
         link_xpath = '.'
-        
-        try:
-            tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5)
-            print(f"Scraped {len(tasks)} tasks")
-            
-            if not tasks:
-                print("No tasks found to comment on")
-                return {"status": "warning", "message": "No tasks found to comment on"}
-                
-        except Exception as e:
-            error_msg = f"Error scraping tasks: {str(e)}"
-            print(error_msg)
-            return {"status": "error", "message": error_msg}
-        
-        # Post comments on tasks
+
+        tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5)
+        print(f"Scraped {len(tasks)} tasks")
+
         if tasks:
-            try:
-                from app.automations.comments import comment_on_some_tasks
-                print(f"Posting comments on up to {max_posts} tasks")
-                
-                # Use the message_content parameter
-                comment_on_some_tasks(
-                    driver=driver,
-                    tasks=tasks,
-                    message_content=message_content, 
-                    max_to_post=max_posts,
-                    image_path=None
-                )
-                
-                save_screenshot(driver, "completed", group_id)
-                print("Commenting completed successfully")
-                result = {"status": "success", "message": "Commenting completed successfully"}
-            except Exception as e:
-                error_msg = f"Error posting comments: {str(e)}"
-                print(error_msg)
-                result = {"status": "error", "message": error_msg}
-        
+            from app.automations.comments import comment_on_some_tasks
+            print(f"Posting comments on up to {max_posts} tasks")
+
+            comment_on_some_tasks(
+                driver=driver,
+                tasks=tasks,
+                message_content=message_content,
+                max_to_post=max_posts,
+                image_path=None
+            )
+
+            save_screenshot(driver, "completed", group_id)
+            print("Commenting completed successfully")
+            result = {"status": "success", "message": "Commenting completed successfully"}
+
         return result
-            
+
     except Exception as e:
         error_msg = f"Error in run_airtasker_bot: {str(e)}"
         print(error_msg)
         return {"status": "error", "message": error_msg}
     finally:
-        # Always ensure the driver is closed properly
         if driver:
-            try:
-                driver.quit()
-                print("Browser closed successfully")
-            except Exception as e:
-                print(f"Error closing browser: {str(e)}")
-        
-        # Final cleanup
+            driver.quit()
+            print("Browser closed successfully")
+
         cleanup_chrome_processes()
 
 

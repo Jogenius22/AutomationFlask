@@ -3,7 +3,7 @@ import os
 import uuid
 import time
 import random
-from datetime import datetime
+import datetime
 from config import ACCOUNTS_FILE, CITIES_FILE, MESSAGES_FILE, SCHEDULES_FILE, LOGS_FILE, SETTINGS_FILE
 import math
 
@@ -269,7 +269,7 @@ def add_log(message, level='info', group_id=None, category='automation'):
             'message': message,
             'level': level,
             'category': category,
-            'timestamp': datetime.datetime.now()  # Use datetime object directly
+            'timestamp': datetime.datetime.now()
         }
         
         # Add group_id if provided
@@ -286,7 +286,7 @@ def add_log(message, level='info', group_id=None, category='automation'):
         logs = logs[:1000]
         
         # Write logs back to file
-        success = _write_file_with_retry(LOGS_FILE, logs)
+        success = _write_file_with_retry(LOGS_FILE, logs, default=datetime_converter)
         if not success:
             print(f"WARNING: Could not save log: {message[:50]}...")
         
@@ -298,7 +298,7 @@ def add_log(message, level='info', group_id=None, category='automation'):
             'message': f"Error adding log: {str(e)}",
             'level': 'error',
             'category': 'essential',
-            'timestamp': datetime.datetime.now()  # Use datetime object directly
+            'timestamp': datetime.datetime.now()
         }
 
 def get_settings():

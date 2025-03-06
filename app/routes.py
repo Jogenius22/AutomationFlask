@@ -126,10 +126,11 @@ def accounts():
     form = AccountForm()
     accounts = dm.get_accounts()
     
-    # Convert string dates to datetime objects if needed
     for account in accounts:
-        if account.get('last_used') and isinstance(account['last_used'], str):
+        if isinstance(account.get('last_used'), str):
             account['last_used'] = dm._string_to_datetime(account['last_used'])
+        if isinstance(account.get('created_at'), str):
+            account['created_at'] = dm._string_to_datetime(account['created_at'])
     
     if form.validate_on_submit():
         if dm.add_account(
@@ -190,9 +191,8 @@ def messages():
     form = MessageForm()
     messages = dm.get_messages()
     
-    # Convert string dates to datetime objects if needed
     for message in messages:
-        if message.get('created_at') and isinstance(message['created_at'], str):
+        if isinstance(message.get('created_at'), str):
             message['created_at'] = dm._string_to_datetime(message['created_at'])
     
     settings = dm.get_settings()
@@ -201,21 +201,13 @@ def messages():
     if form.validate_on_submit():
         uploaded_image = None
         if form.image.data:
-            try:
-                image_filename = secure_filename(form.image.data.filename)
-                uploads_dir = os.path.join(dm.DATA_DIR, 'uploads')
-                os.makedirs(uploads_dir, exist_ok=True)
-                
-                # Save the uploaded file
-                image_path = os.path.join(uploads_dir, image_filename)
-                form.image.data.save(image_path)
-                uploaded_image = image_filename
-                
-                flash(f'Image uploaded: {image_filename}', 'success')
-            except Exception as e:
-                flash(f'Error uploading image: {str(e)}', 'danger')
-                
-        # Add the message
+            image_filename = secure_filename(form.image.data.filename)
+            uploads_dir = os.path.join(dm.DATA_DIR, 'uploads')
+            os.makedirs(uploads_dir, exist_ok=True)
+            image_path = os.path.join(uploads_dir, image_filename)
+            form.image.data.save(image_path)
+            uploaded_image = image_filename
+            
         if dm.add_message(content=form.content.data, image=uploaded_image):
             flash('Message added successfully', 'success')
         else:

@@ -64,6 +64,7 @@ endblock %} {% block content %}
             <thead>
               <tr>
                 <th>Email</th>
+                <th>Capsolver Key</th>
                 <th>Status</th>
                 <th>Last Used</th>
                 <th>Created</th>
@@ -74,6 +75,7 @@ endblock %} {% block content %}
               {% for account in accounts %}
               <tr>
                 <td>{{ account.email }}</td>
+                <td>{{ account.capsolver_key }}</td>
                 <td>
                   <span
                     class="badge {% if account.active %}bg-success{% else %}bg-danger{% endif %}"
@@ -88,8 +90,9 @@ endblock %} {% block content %}
                 </td>
                 <td>
                   {% if account.created_at %} {{
-                  account.created_at.strftime('%Y-%m-%d') if account.created_at
-                  else 'Unknown' }} {% else %} Unknown {% endif %}
+                  account.created_at.strftime('%Y-%m-%d %H:%M') if
+                  account.created_at else 'Unknown' }} {% else %} Unknown {%
+                  endif %}
                 </td>
                 <td>
                   <form
