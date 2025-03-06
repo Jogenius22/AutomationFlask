@@ -44,10 +44,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy app code
 COPY . .
 
-# Create persistent data directory structure
+# Create persistent data directory structure with correct permissions
 # This directory will be mounted as a volume in production
 RUN mkdir -p /app/data/screenshots /app/data/logs /app/data/uploads \
-    && chmod -R 777 /app/data
+    && chmod -R 777 /app/data \
+    && ls -la /app/data
 
 # Create directories needed for Chrome and Xvfb
 RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix \
@@ -60,10 +61,13 @@ ENV FLASK_DEBUG=0
 ENV DISPLAY=:99
 ENV PYTHONUNBUFFERED=1
 ENV SELENIUM_HEADLESS=true
+ENV PYTHONPATH=/app
 # Chrome flags for better extension support in headless mode
 ENV CHROME_ARGS="--no-sandbox --disable-dev-shm-usage --disable-gpu --disable-web-security --allow-running-insecure-content --window-size=1280,800 --remote-debugging-port=9222 --memory-pressure-off --disable-extensions"
 # Ensure proper paths
 ENV DATA_DIR=/app/data
+# Only show automation logs, not initialization logs
+ENV LOG_LEVEL_FILTER=automation
 # Set HOME directory for Chrome
 ENV HOME=/tmp/chrome
 # Use a lower memory ceiling for Chrome to prevent OOM issues
@@ -80,6 +84,7 @@ echo "Starting container with:"\n\
 echo "- Data directory: $DATA_DIR"\n\
 echo "- Display: $DISPLAY"\n\
 echo "- Chrome args: $CHROME_ARGS"\n\
+echo "- Log filter: $LOG_LEVEL_FILTER"\n\
 \n\
 # Enable memory trimming\n\
 echo 1 > /proc/sys/vm/overcommit_memory || echo "Warning: Could not set overcommit_memory (expected in some environments)"\n\
@@ -87,7 +92,11 @@ echo 1 > /proc/sys/vm/overcommit_memory || echo "Warning: Could not set overcomm
 # Ensure data directories exist and have correct permissions\n\
 mkdir -p "$DATA_DIR/screenshots" "$DATA_DIR/logs" "$DATA_DIR/uploads"\n\
 chmod -R 777 "$DATA_DIR"\n\
+ls -la "$DATA_DIR"\n\
 echo "✅ Data directory structure verified"\n\
+\n\
+# Make sure data files are initialized\n\
+python -c "from config import init_data_files; init_data_files()"\n\
 \n\
 # Aggressively clean up any existing Chrome processes\n\
 echo "Cleaning up any existing Chrome processes..."\n\
@@ -113,6 +122,14 @@ TEST_FILE="$DATA_DIR/startup_test.txt"\n\
 if touch "$TEST_FILE"; then\n\
     echo "$(date) - Container startup" > "$TEST_FILE"\n\
     echo "✅ Data directory is writable"\n\
+    ls -la "$DATA_DIR"\n\
+    echo "Data directory contents:"\n\
+    find "$DATA_DIR" -type f | xargs ls -la 2>/dev/null || echo "No files found"\n\
+    # Check if data files exist and are valid JSON\n\
+    echo "Validating data files..."\n\
+    python -c "import json, os; print(f\\"accounts.json valid: {os.path.exists(\\"$DATA_DIR/accounts.json\\") and len(json.load(open(\\"$DATA_DIR/accounts.json\\"))) >= 0 if os.path.exists(\\"$DATA_DIR/accounts.json\\") else False}\\")" || echo "Could not validate accounts.json"\n\
+    python -c "import json, os; print(f\\"cities.json valid: {os.path.exists(\\"$DATA_DIR/cities.json\\") and len(json.load(open(\\"$DATA_DIR/cities.json\\"))) >= 0 if os.path.exists(\\"$DATA_DIR/cities.json\\") else False}\\")" || echo "Could not validate cities.json"\n\
+    python -c "import json, os; print(f\\"messages.json valid: {os.path.exists(\\"$DATA_DIR/messages.json\\") and len(json.load(open(\\"$DATA_DIR/messages.json\\"))) >= 0 if os.path.exists(\\"$DATA_DIR/messages.json\\") else False}\\")" || echo "Could not validate messages.json"\n\
     rm "$TEST_FILE"\n\
 else\n\
     echo "❌ ERROR: Data directory is not writable!"\n\
@@ -143,7 +160,7 @@ free -m || echo "free command not available"\n\
 \n\
 # Start the Flask application with gunicorn with optimized worker settings\n\
 echo "Starting Flask application with Gunicorn"\n\
-exec gunicorn --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 300 --max-requests 50 --max-requests-jitter 10 "run:app"\n\
+exec gunicorn -c /app/gunicorn.conf.py\n\
 ' > /app/startup.sh \
     && chmod +x /app/startup.sh
 
