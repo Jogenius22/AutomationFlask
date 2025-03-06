@@ -89,35 +89,35 @@ USER_AGENTS = [
 # ------------------------------
 def save_screenshot(driver, name_prefix, group_id=None):
     """
-    Save a screenshot to the screenshots directory with timestamp
+    Save a screenshot with the given prefix.
     """
     try:
-        if driver is None:
-            logger.error("Cannot save screenshot - driver is None")
-            return None
-        
-        # Get screenshot dir from config or use default
-        screenshots_dir = os.environ.get('SCREENSHOTS_DIR', 
-                                      os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 
+        # Get the screenshot directory from environment or use a default
+        screenshot_dir = os.environ.get('SCREENSHOT_DIR', 
+                                       os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
                                                    'data', 'screenshots'))
-        os.makedirs(screenshots_dir, exist_ok=True)
         
-        # Create filename with timestamp
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        # Ensure the directory exists
+        os.makedirs(screenshot_dir, exist_ok=True)
+        
+        # Generate filename with timestamp to avoid overwrites
+        timestamp = int(time.time())
         filename = f"{name_prefix}_{timestamp}.png"
-        filepath = os.path.join(screenshots_dir, filename)
+        filepath = os.path.join(screenshot_dir, filename)
         
-        # Save screenshot
+        # Take the screenshot
         driver.save_screenshot(filepath)
-        logger.info(f"Screenshot saved: {filename}")
-        if group_id:
-            dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id, category='automation')
+        
+        # Add log for the screenshot
+        from app.data_manager import add_log
+        try:
+            add_log(f"Screenshot saved: {filename}", level="info", group_id=group_id, category="screenshot")
+        except Exception as e:
+            print(f"Error adding log: {e}")
         
         return filepath
     except Exception as e:
-        logger.error(f"Failed to save screenshot: {str(e)}")
-        if group_id:
-            dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id, category='automation')
+        print(f"Error saving screenshot {name_prefix}: {e}")
         return None
 
 
@@ -317,107 +317,51 @@ class Capsolver(Extension):
 # ------------------------------
 def init_driver(group_id=None):
     """
-    Initialize the Chrome WebDriver with robust error handling and retries
+    Initialize the Selenium WebDriver with proper configuration.
     """
-    # Clear any existing Chrome processes and cache
-    cleanup_chrome_processes()
-    clear_chrome_cache()
-    
-    driver = None
-    max_retries = 3
-    retry_count = 0
-    last_exception = None
-    
-    while retry_count < max_retries:
+    try:
+        user_agent = random.choice(USER_AGENTS)
+        chrome_options = Options()
+        
+        # Standard anti-detection options
+        chrome_options.add_argument(f"--user-agent={user_agent}")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument("--disable-infobars")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        
+        # Get Capsolver API key from settings or use default
+        capsolver_key = "CAP-F79C6D0E7A810348A201783E25287C6003CFB45BBDCB670F96E525E7C0132148"
         try:
-            # Log initialization attempt
-            logger.info(f"Initializing Chrome driver (attempt {retry_count + 1}/{max_retries})")
-            if group_id:
-                dm.add_log(f"Initializing Chrome driver (attempt {retry_count + 1}/{max_retries})", "info", group_id=group_id, category="setup")
-            
-            # Get configured Chrome options
-            chrome_options = get_chrome_options()
-            
-            # Add captcha solver extension
-            api_key = os.environ.get('CAPSOLVER_API_KEY', 'CAP-F79C6D0E7A810348A201783E25287C6003CFB45BBDCB670F96E525E7C0132148')
-            logger.info("Loading Capsolver extension")
-            if group_id:
-                dm.add_log("Loading Capsolver extension", "info", group_id=group_id, category="setup")
-            chrome_options.add_argument(
-                Capsolver(api_key).load()
-            )
-            
-            # Install chromedriver if not present
-            chromedriver_path = chromedriver_autoinstaller.install()
-            logger.info(f"ChromeDriver installed at: {chromedriver_path}")
-            if group_id:
-                dm.add_log(f"ChromeDriver installed at: {chromedriver_path}", "info", group_id=group_id, category="setup")
-            
-            # Create service with longer timeout
-            service = Service(chromedriver_path)
-            
-            # Initialize WebDriver
-            logger.info("Creating Chrome WebDriver instance...")
-            if group_id:
-                dm.add_log("Creating Chrome WebDriver instance...", "info", group_id=group_id, category="setup")
-            
-            driver = webdriver.Chrome(
-                service=service, 
-                options=chrome_options
-            )
-            
-            # Set script timeout to avoid hanging
-            driver.set_script_timeout(30)
-            driver.set_page_load_timeout(60)
-            
-            # Test driver with a blank page
-            logger.info("Testing WebDriver with blank page...")
-            if group_id:
-                dm.add_log("Testing WebDriver with blank page...", "info", group_id=group_id, category="setup")
-            driver.get("about:blank")
-            time.sleep(2)
-            
-            # Success if we reach here
-            logger.info("Chrome driver initialized successfully")
-            if group_id:
-                dm.add_log("Chrome driver initialized successfully", "success", group_id=group_id, category="setup")
-            return driver
-            
+            from app.data_manager import get_settings
+            settings = get_settings()
+            if settings.get('capsolver_key'):
+                capsolver_key = settings.get('capsolver_key')
         except Exception as e:
-            last_exception = e
-            # Handle different error types
-            if "DevToolsActivePort file doesn't exist" in str(e):
-                error_msg = f"Chrome DevTools error: DevToolsActivePort file doesn't exist. This often happens in Docker containers. Adding additional flags."
-                # Add more specific flags to help with this error
-                os.environ['CHROME_ARGS'] = '--no-sandbox --disable-dev-shm-usage --remote-debugging-port=9222'
-            else:
-                error_msg = f"Error initializing Chrome driver: {str(e)}"
-            
-            logger.error(error_msg)
-            if group_id:
-                dm.add_log(error_msg, "error", group_id=group_id, category="essential")
-            
-            # Close driver if it was partially initialized
-            if driver:
-                try:
-                    driver.quit()
-                except:
-                    pass
-            
-            logger.info(f"Retrying in 5 seconds...")
-            if group_id:
-                dm.add_log(f"Retrying in 5 seconds...", "info", group_id=group_id, category="setup")
-            time.sleep(5)
-            retry_count += 1
-    
-    # If we reach here, all retries failed
-    error_msg = f"Failed to initialize Chrome driver after {max_retries} attempts: {str(last_exception)}"
-    logger.error(error_msg)
-    if group_id:
-        dm.add_log(error_msg, "error", group_id=group_id, category="essential")
-        # Add stack trace for detailed debugging
-        dm.add_log(f"Detailed error: {traceback.format_exc()}", "error", group_id=group_id, category="essential")
-    raise Exception(error_msg)
+            print(f"Could not get Capsolver key from settings: {e}")
+        
+        # Load the Capsolver extension
+        try:
+            chrome_options.add_argument(
+                Capsolver(capsolver_key).load()
+            )
+            print("Added Capsolver extension")
+        except Exception as e:
+            print(f"Error loading Capsolver extension: {e}")
+        
+        # Install chromedriver if not present
+        chromedriver_autoinstaller.install()
+        
+        # Initialize the driver
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.set_window_size(1280, 800)
+        print("Chrome driver initialized successfully")
+        
+        return driver
+    except Exception as e:
+        error_msg = f"Error initializing driver: {str(e)}"
+        print(error_msg)
+        raise
 
 
 # ------------------------------
@@ -716,262 +660,305 @@ def scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scro
 # ------------------------------
 def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_content=None, group_id=None, headless=False):
     """
-    Robust function to run the Airtasker bot with comprehensive error handling.
-    
-    Args:
-        email: The user's email address
-        password: The user's password
-        city_name: The city to filter tasks by (default: Sydney)
-        max_posts: Maximum number of posts to comment on
-        message_content: Custom message to post (optional)
-        group_id: Group ID for logging
-        headless: Whether to run in headless mode
-    
-    Returns:
-        tuple: (success, message)
+    Run the Airtasker bot with the specified parameters.
     """
-    driver = None
+    # Start timestamp and logging setup
+    start_time = time.time()
+    
+    # Determine appropriate data directory
+    is_gcp = os.environ.get('GCP_PROJECT') is not None
+    is_cloud = os.environ.get('CLOUD_RUN_JOB') is not None
+    is_docker = os.path.exists('/.dockerenv')
+    
+    # Set up logging directories based on environment
+    if is_gcp or is_cloud or is_docker:
+        base_dir = '/tmp'  # Use /tmp instead of /app on cloud environments
+    else:
+        base_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'data')
+    
+    logs_dir = os.path.join(base_dir, 'logs')
+    screenshots_dir = os.path.join(base_dir, 'screenshots')
+    
+    # Create directories if they don't exist
+    try:
+        os.makedirs(logs_dir, exist_ok=True)
+        os.makedirs(screenshots_dir, exist_ok=True)
+    except Exception as e:
+        print(f"Warning: Could not create directories: {e}")
+        # Fallback to current directory if needed
+        logs_dir = '.'
+        screenshots_dir = '.'
+    
+    # Set environment variables for other functions to use
+    os.environ['LOG_DIR'] = logs_dir
+    os.environ['SCREENSHOT_DIR'] = screenshots_dir
+    
+    # Configure logging to both console and file
+    log_file = os.path.join(logs_dir, f'airtasker_bot_{int(time.time())}.log')
     
     try:
-        # Log start of bot run
-        dm.add_log(f"Starting Airtasker bot for {email} {'in headless mode' if headless else ''}", "info", group_id=group_id)
+        # Rest of the function code remains the same
+        driver = None
         
-        if message_content:
-            dm.add_log(f"Using message content: {message_content}", "info", group_id=group_id)
-        
-        dm.add_log(f"Starting bot for {email} in {city_name}", "info", group_id=group_id)
-        dm.add_log(f"Bot started for {email} in {city_name} with max posts: {max_posts}", "info", group_id=group_id)
-        
-        # Take initial screenshot
-        # We'll create this in the logs directory first since driver isn't available yet
-        logs_dir = os.path.join(os.environ.get('DATA_DIR', '/app/data'), 'logs')
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        log_file = os.path.join(logs_dir, f"startup_{timestamp}.log")
-        os.makedirs(logs_dir, exist_ok=True)
-        with open(log_file, "w") as f:
-            f.write(f"Starting bot for {email} in {city_name} at {timestamp}\n")
-        
-        # Try to initialize the driver with multiple attempts if needed
         try:
-            logger.info("Starting browser initialization...")
-            driver = init_driver(group_id)
-            logger.info("Browser initialized successfully")
-            if group_id:
-                dm.add_log("Browser initialized successfully", "info", group_id=group_id)
-        except Exception as driver_error:
-            error_msg = f"Failed to initialize browser: {str(driver_error)}"
-            logger.error(error_msg)
-            logger.error(traceback.format_exc())
-            if group_id:
-                dm.add_log(error_msg, "error", group_id=group_id)
-                dm.add_log(f"Detailed error: {traceback.format_exc()}", "error", group_id=group_id)
-            return False, error_msg
+            # Log start of bot run
+            dm.add_log(f"Starting Airtasker bot for {email} {'in headless mode' if headless else ''}", "info", group_id=group_id)
             
-        # Initialize with clear logging
-        driver.get("https://www.airtasker.com/")
-        time.sleep(random.uniform(5, 8))
-        
-        # Take screenshot now that we have a driver
-        save_screenshot(driver, "initial_page", group_id)
-        
-        # Credentials and login XPaths
-        login_button_xpath = '//*[@id="airtasker-app"]/nav/div[2]/div/div/div/div[2]/a[2]'
-        email_input_id = "username"
-        password_input_id = "password"
-        submit_button_xpath = "/html/body/main/section/div/div/div/form/div[2]/button"
-        
-        # 1. LOGIN (with URL verification)
-        try:
-            login_result = login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath, group_id=group_id)
-            if not login_result:
-                dm.add_log("Login process returned False", "error", group_id=group_id)
-                return False, "Login failed"
-            dm.add_log("Login successful", "success", group_id=group_id)
-        except Exception as login_error:
-            error_msg = f"Login error: {str(login_error)}"
-            logger.error(error_msg)
-            logger.error(traceback.format_exc())
-            if group_id:
-                dm.add_log(error_msg, "error", group_id=group_id)
-            return False, error_msg
-        
-        # 2. Navigate to tasks page with retry
-        max_retries = 3
-        for retry in range(max_retries):
+            if message_content:
+                dm.add_log(f"Using message content: {message_content}", "info", group_id=group_id)
+            
+            dm.add_log(f"Starting bot for {email} in {city_name}", "info", group_id=group_id)
+            dm.add_log(f"Bot started for {email} in {city_name} with max posts: {max_posts}", "info", group_id=group_id)
+            
+            # Take initial screenshot
+            # We'll create this in the logs directory first since driver isn't available yet
+            logs_dir = os.path.join(os.environ.get('DATA_DIR', '/app/data'), 'logs')
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            log_file = os.path.join(logs_dir, f"startup_{timestamp}.log")
+            os.makedirs(logs_dir, exist_ok=True)
+            with open(log_file, "w") as f:
+                f.write(f"Starting bot for {email} in {city_name} at {timestamp}\n")
+            
+            # Try to initialize the driver with multiple attempts if needed
             try:
-                tasks_page_url = "https://www.airtasker.com/tasks"
-                dm.add_log(f"Navigating to tasks page: {tasks_page_url}", "info", group_id=group_id)
-                driver.get(tasks_page_url)
-                time.sleep(random.uniform(5, 8))
-                current_url = driver.current_url
-                dm.add_log(f"Current URL after navigation: {current_url}", "info", group_id=group_id)
-                
-                if "tasks" in current_url.lower():
-                    dm.add_log("Successfully navigated to tasks page", "success", group_id=group_id)
-                    break
-                else:
-                    dm.add_log(f"Unexpected URL after navigation (retry {retry+1}/{max_retries}): {current_url}", "warning", group_id=group_id)
+                logger.info("Starting browser initialization...")
+                driver = init_driver(group_id)
+                logger.info("Browser initialized successfully")
+                if group_id:
+                    dm.add_log("Browser initialized successfully", "info", group_id=group_id)
+            except Exception as driver_error:
+                error_msg = f"Failed to initialize browser: {str(driver_error)}"
+                logger.error(error_msg)
+                logger.error(traceback.format_exc())
+                if group_id:
+                    dm.add_log(error_msg, "error", group_id=group_id)
+                    dm.add_log(f"Detailed error: {traceback.format_exc()}", "error", group_id=group_id)
+                return False, error_msg
+            
+            # Initialize with clear logging
+            driver.get("https://www.airtasker.com/")
+            time.sleep(random.uniform(5, 8))
+            
+            # Take screenshot now that we have a driver
+            save_screenshot(driver, "initial_page", group_id)
+            
+            # Credentials and login XPaths
+            login_button_xpath = '//*[@id="airtasker-app"]/nav/div[2]/div/div/div/div[2]/a[2]'
+            email_input_id = "username"
+            password_input_id = "password"
+            submit_button_xpath = "/html/body/main/section/div/div/div/form/div[2]/button"
+            
+            # 1. LOGIN (with URL verification)
+            try:
+                login_result = login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath, group_id=group_id)
+                if not login_result:
+                    dm.add_log("Login process returned False", "error", group_id=group_id)
+                    return False, "Login failed"
+                dm.add_log("Login successful", "success", group_id=group_id)
+            except Exception as login_error:
+                error_msg = f"Login error: {str(login_error)}"
+                logger.error(error_msg)
+                logger.error(traceback.format_exc())
+                if group_id:
+                    dm.add_log(error_msg, "error", group_id=group_id)
+                return False, error_msg
+            
+            # 2. Navigate to tasks page with retry
+            max_retries = 3
+            for retry in range(max_retries):
+                try:
+                    tasks_page_url = "https://www.airtasker.com/tasks"
+                    dm.add_log(f"Navigating to tasks page: {tasks_page_url}", "info", group_id=group_id)
+                    driver.get(tasks_page_url)
+                    time.sleep(random.uniform(5, 8))
+                    current_url = driver.current_url
+                    dm.add_log(f"Current URL after navigation: {current_url}", "info", group_id=group_id)
+                    
+                    if "tasks" in current_url.lower():
+                        dm.add_log("Successfully navigated to tasks page", "success", group_id=group_id)
+                        break
+                    else:
+                        dm.add_log(f"Unexpected URL after navigation (retry {retry+1}/{max_retries}): {current_url}", "warning", group_id=group_id)
+                        if retry == max_retries - 1:
+                            return False, "Failed to navigate to tasks page after multiple attempts"
+                        time.sleep(random.uniform(3, 5))
+                except Exception as nav_error:
+                    error_msg = f"Navigation error (retry {retry+1}/{max_retries}): {str(nav_error)}"
+                    dm.add_log(error_msg, "error", group_id=group_id)
                     if retry == max_retries - 1:
-                        return False, "Failed to navigate to tasks page after multiple attempts"
+                        return False, f"Failed to navigate to tasks page: {str(nav_error)}"
                     time.sleep(random.uniform(3, 5))
-            except Exception as nav_error:
-                error_msg = f"Navigation error (retry {retry+1}/{max_retries}): {str(nav_error)}"
-                dm.add_log(error_msg, "error", group_id=group_id)
-                if retry == max_retries - 1:
-                    return False, f"Failed to navigate to tasks page: {str(nav_error)}"
-                time.sleep(random.uniform(3, 5))
-        
-        # 3. Set location filter
-        try:
-            radius_km = 100
-            filter_result = set_location_filter(driver, city_name, radius_km, group_id=group_id)
-            if not filter_result:
-                dm.add_log("Location filter could not be set", "warning", group_id=group_id)
+            
+            # 3. Set location filter
+            try:
+                radius_km = 100
+                filter_result = set_location_filter(driver, city_name, radius_km, group_id=group_id)
+                if not filter_result:
+                    dm.add_log("Location filter could not be set", "warning", group_id=group_id)
+                    # We'll continue anyway, as this isn't necessarily fatal
+            except Exception as filter_error:
+                error_msg = f"Error setting location filter: {str(filter_error)}"
+                dm.add_log(error_msg, "warning", group_id=group_id)
                 # We'll continue anyway, as this isn't necessarily fatal
-        except Exception as filter_error:
-            error_msg = f"Error setting location filter: {str(filter_error)}"
-            dm.add_log(error_msg, "warning", group_id=group_id)
-            # We'll continue anyway, as this isn't necessarily fatal
-        
-        # 4. Scrape tasks
-        try:
-            task_container_xpath = '//a[@data-ui-test="task-list-item" and @data-task-id]'
-            title_xpath = './/p[contains(@class,"TaskCard__StyledTitle")]'
-            link_xpath = '.'
             
-            dm.add_log("Starting to scrape tasks", "info", group_id=group_id)
-            tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5, group_id=group_id)
-            
-            if not tasks:
-                dm.add_log("No tasks found to comment on", "warning", group_id=group_id)
-                return False, "No tasks found to comment on"
+            # 4. Scrape tasks
+            try:
+                task_container_xpath = '//a[@data-ui-test="task-list-item" and @data-task-id]'
+                title_xpath = './/p[contains(@class,"TaskCard__StyledTitle")]'
+                link_xpath = '.'
                 
-            dm.add_log(f"Scraped {len(tasks)} tasks", "success", group_id=group_id)
-        except Exception as scrape_error:
-            error_msg = f"Error scraping tasks: {str(scrape_error)}"
-            dm.add_log(error_msg, "error", group_id=group_id)
-            return False, error_msg
-        
-        # 5. Post comments on a subset of tasks
-        try:
-            dm.add_log(f"Attempting to post on up to {max_posts} tasks", "info", group_id=group_id)
-            posted_count = comment_on_some_tasks(driver, tasks, message_content=message_content, max_to_post=max_posts, image_path=None, group_id=group_id)
+                dm.add_log("Starting to scrape tasks", "info", group_id=group_id)
+                tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5, group_id=group_id)
+                
+                if not tasks:
+                    dm.add_log("No tasks found to comment on", "warning", group_id=group_id)
+                    return False, "No tasks found to comment on"
+                    
+                dm.add_log(f"Scraped {len(tasks)} tasks", "success", group_id=group_id)
+            except Exception as scrape_error:
+                error_msg = f"Error scraping tasks: {str(scrape_error)}"
+                dm.add_log(error_msg, "error", group_id=group_id)
+                return False, error_msg
             
-            if posted_count > 0:
-                dm.add_log(f"Successfully posted {posted_count} comments", "success", group_id=group_id)
+            # 5. Post comments on a subset of tasks
+            if tasks:
+                try:
+                    from app.automations.comments import comment_on_some_tasks
+                    # Get screenshot directory for any image attachments
+                    screenshot_dir = os.environ.get('SCREENSHOT_DIR', os.path.join(base_dir, 'screenshots'))
+                    
+                    # Log the action
+                    logger.info(f"Posting comments on up to {max_posts} tasks with message: {message_content}")
+                    if group_id:
+                        dm.add_log(f"Posting comments on up to {max_posts} tasks", "info", group_id=group_id)
+                    
+                    # Call the comment function with the proper parameters
+                    comment_on_some_tasks(
+                        driver=driver,
+                        tasks=tasks,
+                        message_content=message_content,  # Pass message_content here
+                        max_to_post=max_posts,
+                        image_path=None,  # We're not using image attachments for now
+                        group_id=group_id
+                    )
+                    
+                    # Take a final screenshot
+                    save_screenshot(driver, "completed", group_id)
+                    
+                    # Log success
+                    logger.info("Commenting process completed successfully")
+                    if group_id:
+                        dm.add_log("Commenting process completed successfully", "success", group_id=group_id)
+                    
+                    result = (True, "Commenting completed successfully")
+                except Exception as e:
+                    error_msg = f"Error posting comments: {str(e)}"
+                    logger.error(error_msg)
+                    logger.error(traceback.format_exc())
+                    if group_id:
+                        dm.add_log(error_msg, "error", group_id=group_id)
+                    result = (False, error_msg)
             else:
-                dm.add_log("No comments were posted successfully", "warning", group_id=group_id)
-        except Exception as comment_error:
-            error_msg = f"Error posting comments: {str(comment_error)}"
-            dm.add_log(error_msg, "error", group_id=group_id)
-            return False, error_msg
+                msg = "No tasks found to comment on"
+                logger.warning(msg)
+                if group_id:
+                    dm.add_log(msg, "warning", group_id=group_id)
+                result = (False, msg)
+            
+            save_screenshot(driver, "completed", group_id)
+            dm.add_log("Bot task completed successfully", "success", group_id=group_id)
+            return result
         
-        save_screenshot(driver, "completed", group_id)
-        dm.add_log("Bot task completed successfully", "success", group_id=group_id)
-        return True, "Bot completed successfully"
-    
+        except Exception as e:
+            error_msg = f"Error in bot: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            if group_id:
+                dm.add_log(error_msg, "error", group_id=group_id)
+            return False, str(e)
+        finally:
+            # Always ensure the driver is closed properly
+            if driver:
+                try:
+                    logger.info("Closing browser")
+                    driver.quit()
+                    logger.info("Browser closed successfully")
+                    if group_id:
+                        dm.add_log("Browser closed successfully", "info", group_id=group_id)
+                except Exception as quit_error:
+                    logger.error(f"Error closing browser: {str(quit_error)}")
+                    if group_id:
+                        dm.add_log(f"Error closing browser: {str(quit_error)}", "warning", group_id=group_id)
+            
+            # Final cleanup
+            try:
+                cleanup_chrome_processes()
+            except:
+                pass
+
+        return result
     except Exception as e:
-        error_msg = f"Error in bot: {str(e)}"
+        error_msg = f"Error in run_airtasker_bot: {str(e)}"
         logger.error(error_msg)
         logger.error(traceback.format_exc())
         if group_id:
             dm.add_log(error_msg, "error", group_id=group_id)
         return False, str(e)
-    finally:
-        # Always ensure the driver is closed properly
-        if driver:
-            try:
-                logger.info("Closing browser")
-                driver.quit()
-                logger.info("Browser closed successfully")
-                if group_id:
-                    dm.add_log("Browser closed successfully", "info", group_id=group_id)
-            except Exception as quit_error:
-                logger.error(f"Error closing browser: {str(quit_error)}")
-                if group_id:
-                    dm.add_log(f"Error closing browser: {str(quit_error)}", "warning", group_id=group_id)
-        
-        # Final cleanup
-        try:
-            cleanup_chrome_processes()
-        except:
-            pass
 
 
 # ------------------------------
 # Main execution
 # ------------------------------
 def main():
-    group_id = None
-    driver = None
-    
+    """
+    Main function to run the Airtasker bot.
+    """
+    driver = init_driver()
+    driver.get("https://www.airtasker.com/")
+    time.sleep(random.uniform(5, 8))
     try:
-        # Setup logging for direct execution
-        group_id = str(int(time.time()))  # Use timestamp as group_id
-        
-        # Initialize driver with the group_id
-        driver = init_driver(group_id)
-        driver.get("https://www.airtasker.com/")
+        # Credentials and login XPaths
+        email = "Donnahartspare2000@gmail.com"
+        password = "Cairns@2000"
+        login_button_xpath = '//*[@id="airtasker-app"]/nav/div[2]/div/div/div/div[2]/a[2]'
+        email_input_id = "username"
+        password_input_id = "password"
+        submit_button_xpath = "/html/body/main/section/div/div/div/form/div[2]/button"
+
+        # 1. LOGIN (with URL verification)
+        login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath)
+        print("Login successful.")
+
+        time.sleep(5)
+        # 2. Navigate to tasks page
+        tasks_page_url = "https://www.airtasker.com/tasks"
+        driver.get(tasks_page_url)
         time.sleep(random.uniform(5, 8))
-        
-        try:
-            # Credentials and login XPaths
-            email = "Donnahartspare2000@gmail.com"
-            password = "Cairns@2000"
-            login_button_xpath = '//*[@id="airtasker-app"]/nav/div[2]/div/div/div/div[2]/a[2]'
-            email_input_id = "username"
-            password_input_id = "password"
-            submit_button_xpath = "/html/body/main/section/div/div/div/form/div[2]/button"
 
-            # 1. LOGIN (with URL verification)
-            login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath, group_id=group_id)
-            logger.info("Login successful.")
+        # 3. Set location filter
+        city_name = "Sydney"
+        radius_km = 100
+        set_location_filter(driver, city_name, radius_km)
+        print("Location filter set.")
 
-            time.sleep(5)
-            # 2. Navigate to tasks page
-            tasks_page_url = "https://www.airtasker.com/tasks"
-            driver.get(tasks_page_url)
-            time.sleep(random.uniform(5, 8))
+        # 4. Scrape tasks
+        task_container_xpath = '//a[@data-ui-test="task-list-item" and @data-task-id]'
+        title_xpath = './/p[contains(@class,"TaskCard__StyledTitle")]'
+        link_xpath = '.'
+        tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5)
+        print(f"Scraped {len(tasks)} tasks:")
+        for t in tasks:
+            print(t)
 
-            # 3. Set location filter
-            city_name = "Sydney"
-            radius_km = 100
-            set_location_filter(driver, city_name, radius_km, group_id=group_id)
-            logger.info("Location filter set.")
+        time.sleep(10)
+        # 5. Post comments on a subset of tasks (with optional image upload)
+        message = "Hey did you know there is another jobs application called SmartTasker (all one word) with less fees. you are more likely to get better quotes."
+        from app.automations.comments import comment_on_some_tasks
+        comment_on_some_tasks(driver, tasks, message_content=message, max_to_post=3, image_path=None)
 
-            # 4. Scrape tasks
-            task_container_xpath = '//a[@data-ui-test="task-list-item" and @data-task-id]'
-            title_xpath = './/p[contains(@class,"TaskCard__StyledTitle")]'
-            link_xpath = '.'
-            tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5, group_id=group_id)
-            logger.info(f"Scraped {len(tasks)} tasks:")
-            for t in tasks[:5]:  # Log just the first 5 tasks
-                logger.info(f"Task: {t.get('title')} (ID: {t.get('id')})")
-
-            # 5. Post comments on a subset of tasks
-            # Use a generic message for testing
-            message = "Hey, you might get better quotes posting on the SmartTasker app. The fees are 25% less!"
-            comment_on_some_tasks(driver, tasks, message_content=message, max_to_post=3, image_path=None, group_id=group_id)
-            logger.info("Comments posted successfully")
-
-        except Exception as e:
-            logger.error(f"Error in main workflow: {str(e)}")
-            logger.error(traceback.format_exc())
-            if group_id:
-                dm.add_log(f"Error in main workflow: {str(e)}", "error", group_id=group_id)
     finally:
-        logger.info("Closing browser.")
-        if driver:
-            try:
-                driver.quit()
-            except:
-                logger.error("Error closing browser")
-        
-        # Final cleanup
-        try:
-            cleanup_chrome_processes()
-        except:
-            pass
+        print("Closing browser.")
+        driver.quit()
 
 
 if __name__ == "__main__":

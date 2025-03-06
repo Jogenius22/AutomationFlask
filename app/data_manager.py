@@ -14,10 +14,19 @@ def generate_id():
     return str(uuid.uuid4())
 
 def datetime_converter(obj):
-    """Convert datetime objects to ISO format for JSON serialization"""
-    if isinstance(obj, datetime):
+    """Convert datetime objects to ISO format strings for JSON serialization."""
+    if isinstance(obj, datetime.datetime):
         return obj.isoformat()
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+def _string_to_datetime(datetime_str):
+    """Convert ISO format string to datetime object"""
+    if not datetime_str or not isinstance(datetime_str, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(datetime_str)
+    except (ValueError, TypeError):
+        return None
 
 def _read_file_with_retry(file_path, max_retries=3):
     """Read a JSON file with retry mechanism to handle transient errors"""
@@ -71,8 +80,15 @@ def _write_file_with_retry(file_path, data, max_retries=3):
     return False
 
 def get_accounts():
-    """Get all accounts from JSON file"""
-    return _read_file_with_retry(ACCOUNTS_FILE)
+    """Retrieve all accounts from the accounts JSON file."""
+    accounts = _read_file_with_retry(ACCOUNTS_FILE)
+    # Convert string dates to datetime objects
+    for account in accounts:
+        if 'last_used' in account and account['last_used']:
+            account['last_used'] = _string_to_datetime(account['last_used'])
+        if 'created_at' in account and account['created_at']:
+            account['created_at'] = _string_to_datetime(account['created_at'])
+    return accounts
 
 def add_account(email, password, capsolver_key=None, active=True):
     """Add a new account to JSON file"""
@@ -91,8 +107,13 @@ def add_account(email, password, capsolver_key=None, active=True):
     return new_account
 
 def get_cities():
-    """Get all cities from JSON file"""
-    return _read_file_with_retry(CITIES_FILE)
+    """Retrieve all cities from the cities JSON file."""
+    cities = _read_file_with_retry(CITIES_FILE)
+    # Convert string dates to datetime objects
+    for city in cities:
+        if 'created_at' in city and city['created_at']:
+            city['created_at'] = _string_to_datetime(city['created_at'])
+    return cities
 
 def add_city(name, radius):
     """Add a new city to JSON file"""
@@ -108,8 +129,13 @@ def add_city(name, radius):
     return new_city
 
 def get_messages():
-    """Get all messages from JSON file"""
-    return _read_file_with_retry(MESSAGES_FILE)
+    """Retrieve all messages from the messages JSON file."""
+    messages = _read_file_with_retry(MESSAGES_FILE)
+    # Convert string dates to datetime objects
+    for message in messages:
+        if 'created_at' in message and message['created_at']:
+            message['created_at'] = _string_to_datetime(message['created_at'])
+    return messages
 
 def add_message(content, image=None):
     """Add a new message to JSON file"""
@@ -126,8 +152,15 @@ def add_message(content, image=None):
     return new_message
 
 def get_schedules():
-    """Get all schedules from JSON file"""
-    return _read_file_with_retry(SCHEDULES_FILE)
+    """Retrieve all schedules from the schedules JSON file."""
+    schedules = _read_file_with_retry(SCHEDULES_FILE)
+    # Convert string dates to datetime objects
+    for schedule in schedules:
+        if 'created_at' in schedule and schedule['created_at']:
+            schedule['created_at'] = _string_to_datetime(schedule['created_at'])
+        if 'last_run' in schedule and schedule['last_run']:
+            schedule['last_run'] = _string_to_datetime(schedule['last_run'])
+    return schedules
 
 def add_schedule(account_id, city_id, start_time, end_time, days=None, max_tasks=5, status='active'):
     """Add a new schedule to JSON file"""
@@ -328,14 +361,15 @@ def get_message_by_id(message_id):
     return None
 
 def update_account_last_used(account_id):
-    """Update last_used timestamp for account"""
+    """Update the last_used field of the account with the current datetime."""
     accounts = get_accounts()
+    
     for account in accounts:
-        if account['id'] == account_id:
-            account['last_used'] = datetime.utcnow()  # Use datetime object directly
-            break
+        if account.get('id') == account_id:
+            account['last_used'] = datetime.datetime.now()
     
     _write_file_with_retry(ACCOUNTS_FILE, accounts)
+    return True
 
 def delete_account(account_id):
     """Delete an account by ID"""
@@ -381,7 +415,7 @@ def update_last_used(account_id):
     accounts = get_accounts()
     for account in accounts:
         if account['id'] == account_id:
-            account['last_used'] = datetime.utcnow().isoformat()
+            account['last_used'] = datetime.datetime.now().isoformat()
             _write_file_with_retry(ACCOUNTS_FILE, accounts)
             return True
     return False
