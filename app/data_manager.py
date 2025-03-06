@@ -401,14 +401,26 @@ def update_city(city_id, **kwargs):
     return None
 
 def update_message(message_id, **kwargs):
-    """Update an existing message"""
+    """Update a message by ID with provided fields"""
     messages = get_messages()
     for message in messages:
-        if message.get('id') == message_id:
-            message.update(kwargs)
+        if message['id'] == message_id:
+            for key, value in kwargs.items():
+                message[key] = value
             _write_file_with_retry(MESSAGES_FILE, messages)
-            return message
-    return None
+            return True
+    return False
+
+def update_schedule(schedule_id, **kwargs):
+    """Update a schedule by ID with provided fields"""
+    schedules = get_schedules()
+    for schedule in schedules:
+        if schedule['id'] == schedule_id:
+            for key, value in kwargs.items():
+                schedule[key] = value
+            _write_file_with_retry(SCHEDULES_FILE, schedules)
+            return True
+    return False
 
 class LogManager:
     """Class to manage log operations with enhanced functionality"""
