@@ -70,11 +70,18 @@ def allowed_file(filename):
 @bp.route('/dashboard')
 def dashboard():
     """Dashboard with account, city, message management and recent logs"""
+    # Initialize with empty values to handle exceptions gracefully
     accounts = []
     cities = []
     messages = []
     logs = Pagination(page=1, per_page=5, total=0, items=[])
-    settings = dm.get_settings()  # Get settings for the dashboard
+    
+    # Get settings with a fallback for error cases
+    try:
+        settings = dm.get_settings()
+    except Exception as e:
+        current_app.logger.error(f"Error loading settings: {str(e)}")
+        settings = {"max_posts_per_day": 3}  # Default fallback settings
     
     try:
         # Get accounts, cities, and messages for the dashboard
@@ -99,30 +106,6 @@ def dashboard():
                 'status': 'success',
                 'logs': logs_data
             })
-            
-        # Format datetime fields for display
-        for item_list in [accounts, cities, messages]:
-            for item in item_list:
-                if 'created_at' in item and item['created_at']:
-                    try:
-                        if isinstance(item['created_at'], str):
-                            # Convert ISO format to more readable format
-                            dt = datetime.fromisoformat(item['created_at'].replace('Z', '+00:00'))
-                            item['created_at'] = dt
-                    except Exception as e:
-                        current_app.logger.error(f"Error formatting datetime: {e}")
-                        item['created_at'] = None
-                        
-                if 'last_used' in item and item['last_used']:
-                    try:
-                        if isinstance(item['last_used'], str):
-                            # Convert ISO format to more readable format
-                            dt = datetime.fromisoformat(item['last_used'].replace('Z', '+00:00'))
-                            item['last_used'] = dt
-                    except Exception as e:
-                        current_app.logger.error(f"Error formatting last_used datetime: {e}")
-                        item['last_used'] = None
-        
     except Exception as e:
         error_msg = f"Error loading dashboard: {str(e)}"
         current_app.logger.error(error_msg)
@@ -150,18 +133,6 @@ def accounts():
         return redirect(url_for('main.accounts'))
     
     accounts = dm.get_accounts()
-    
-    # Format datetime fields for display
-    for account in accounts:
-        if account.get('last_used'):
-            account['last_used'] = datetime.datetime.fromisoformat(account['last_used'])
-        else:
-            account['last_used'] = None
-        
-        # Handle created_at date formatting
-        if account.get('created_at'):
-            account['created_at'] = datetime.datetime.fromisoformat(account['created_at'])
-    
     return render_template('accounts.html', form=form, accounts=accounts)
 
 @bp.route('/cities', methods=['GET', 'POST'])
@@ -176,12 +147,6 @@ def cities():
         return redirect(url_for('main.cities'))
     
     cities = dm.get_cities()
-    
-    # Format datetime fields for display
-    for city in cities:
-        if city.get('created_at'):
-            city['created_at'] = datetime.datetime.fromisoformat(city['created_at'])
-    
     return render_template('cities.html', form=form, cities=cities)
 
 @bp.route('/messages', methods=['GET', 'POST'])
@@ -206,12 +171,6 @@ def messages():
         return redirect(url_for('main.messages'))
     
     messages = dm.get_messages()
-    
-    # Format datetime fields for display
-    for message in messages:
-        if message.get('created_at'):
-            message['created_at'] = datetime.datetime.fromisoformat(message['created_at'])
-    
     return render_template('messages.html', form=form, messages=messages)
 
 @bp.route('/schedules', methods=['GET', 'POST'])

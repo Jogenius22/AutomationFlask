@@ -375,8 +375,7 @@ endblock %} {% block extra_head %}
                   log.timestamp.split('T')[1].split('.')[0] if 'T' in
                   log.timestamp and log.timestamp.split('T')|length > 1 else ''
                   }} {% else %} {{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S')
-                  if log.timestamp is not string }} {% endif %} {% else %}
-                  Unknown {% endif %}
+                  }} {% endif %} {% else %} Unknown {% endif %}
                 </td>
                 <td>{{ log.message }}</td>
                 <td>

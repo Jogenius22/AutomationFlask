@@ -54,10 +54,10 @@ def _write_file_with_retry(file_path, data, max_retries=3):
             # Write to a temporary file first
             temp_file = f"{file_path}.tmp"
             with open(temp_file, 'w') as f:
-                json.dump(data, f, indent=4)
-            
-            # Force flush to disk
-            os.fsync(f.fileno())
+                json.dump(data, f, indent=4, default=datetime_converter)
+                # Force flush to disk inside the with block to ensure file is not closed prematurely
+                f.flush()
+                os.fsync(f.fileno())
             
             # Rename to actual file (atomic operation on most filesystems)
             os.replace(temp_file, file_path)
@@ -83,7 +83,7 @@ def add_account(email, password, active=True):
         'password': password,
         'active': active,
         'last_used': None,
-        'created_at': datetime.utcnow().isoformat()
+        'created_at': datetime.utcnow()
     }
     accounts.append(new_account)
     _write_file_with_retry(ACCOUNTS_FILE, accounts)
@@ -100,7 +100,7 @@ def add_city(name, radius):
         'id': generate_id(),
         'name': name,
         'radius': int(radius),
-        'created_at': datetime.utcnow().isoformat()
+        'created_at': datetime.utcnow()
     }
     cities.append(new_city)
     _write_file_with_retry(CITIES_FILE, cities)
@@ -117,7 +117,7 @@ def add_message(content, image=None):
         'id': generate_id(),
         'content': content,
         'image': image,
-        'created_at': datetime.utcnow().isoformat(),
+        'created_at': datetime.utcnow(),
         'last_used': None
     }
     messages.append(new_message)
@@ -136,7 +136,7 @@ def add_schedule(start_time, end_time, active=True):
         'start_time': start_time,
         'end_time': end_time,
         'active': active,
-        'created_at': datetime.utcnow().isoformat()
+        'created_at': datetime.utcnow()
     }
     schedules.append(new_schedule)
     _write_file_with_retry(SCHEDULES_FILE, schedules)
@@ -247,7 +247,7 @@ def add_log(message, level='info', group_id=None, category='automation'):
             'message': message,
             'level': level,
             'category': category,
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now()  # Use datetime object directly
         }
         
         # Add group_id if provided
@@ -276,7 +276,7 @@ def add_log(message, level='info', group_id=None, category='automation'):
             'message': f"Error adding log: {str(e)}",
             'level': 'error',
             'category': 'essential',
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now()  # Use datetime object directly
         }
 
 def get_settings():
@@ -326,7 +326,7 @@ def update_account_last_used(account_id):
     accounts = get_accounts()
     for account in accounts:
         if account['id'] == account_id:
-            account['last_used'] = datetime.utcnow().isoformat()
+            account['last_used'] = datetime.utcnow()  # Use datetime object directly
             break
     
     _write_file_with_retry(ACCOUNTS_FILE, accounts)
