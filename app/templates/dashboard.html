@@ -1,5 +1,128 @@
 {% extends 'base.html' %} {% block title %}Dashboard - Airtasker Bot Manager{%
-endblock %} {% block content %}
+endblock %} {% block extra_head %}
+<script>
+  // Auto-refresh logs function
+  function refreshLogs() {
+    fetch("/api/recent_logs", {
+      headers: {
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    })
+      .then((response) => response.json())
+      .then((data) => {
+        const logTable = document.querySelector("#recent-activity tbody");
+        if (logTable) {
+          // Clear existing logs
+          logTable.innerHTML = "";
+
+          // Update with new logs
+          if (data.logs && data.logs.length > 0) {
+            data.logs.forEach((log) => {
+              const row = document.createElement("tr");
+
+              // Add log level class
+              if (log.level === "error") {
+                row.classList.add("table-danger");
+              } else if (log.level === "warning") {
+                row.classList.add("table-warning");
+              }
+
+              // Timestamp
+              const timeCell = document.createElement("td");
+              timeCell.style.whiteSpace = "nowrap";
+              if (log.timestamp) {
+                let formattedTime = log.timestamp;
+                if (typeof log.timestamp === "string") {
+                  const parts = log.timestamp.split("T");
+                  formattedTime =
+                    parts[0] +
+                    " " +
+                    (parts.length > 1 ? parts[1].split(".")[0] : "");
+                }
+                timeCell.textContent = formattedTime;
+              } else {
+                timeCell.textContent = "Unknown";
+              }
+
+              // Message
+              const msgCell = document.createElement("td");
+              msgCell.textContent = log.message;
+
+              // Level badge
+              const levelCell = document.createElement("td");
+              const badge = document.createElement("span");
+
+              badge.classList.add("badge");
+              if (log.level === "info") {
+                badge.classList.add("bg-success");
+              } else if (log.level === "warning") {
+                badge.classList.add("bg-warning");
+              } else {
+                badge.classList.add("bg-danger");
+              }
+              badge.textContent = log.level;
+              levelCell.appendChild(badge);
+
+              // Group view button
+              const groupCell = document.createElement("td");
+              if (log.group_id) {
+                const viewLink = document.createElement("a");
+                viewLink.href = "/logs?group_id=" + log.group_id;
+                viewLink.classList.add("btn", "btn-sm", "btn-outline-primary");
+                const icon = document.createElement("i");
+                icon.classList.add("fas", "fa-eye");
+                viewLink.appendChild(icon);
+                groupCell.appendChild(viewLink);
+              }
+
+              // Add cells to row
+              row.appendChild(timeCell);
+              row.appendChild(msgCell);
+              row.appendChild(levelCell);
+              row.appendChild(groupCell);
+
+              // Add row to table
+              logTable.appendChild(row);
+            });
+          } else {
+            // No logs
+            const row = document.createElement("tr");
+            const cell = document.createElement("td");
+            cell.setAttribute("colspan", "4");
+            cell.classList.add("text-center");
+            const em = document.createElement("em");
+            em.textContent = "No logs available.";
+            cell.appendChild(em);
+            row.appendChild(cell);
+            logTable.appendChild(row);
+          }
+
+          document.getElementById("last-refresh").textContent =
+            "Last refreshed: " + new Date().toLocaleTimeString();
+        }
+      })
+      .catch((error) => {
+        console.error("Error refreshing logs:", error);
+      });
+  }
+
+  // Set interval for auto-refresh (every 10 seconds)
+  document.addEventListener("DOMContentLoaded", function () {
+    // Initial load
+    setInterval(refreshLogs, 10000);
+
+    // Log the auto-refresh is active
+    console.log("Auto-refresh is active, logs will update every 10 seconds");
+
+    // Add manual refresh functionality
+    document
+      .getElementById("manual-refresh")
+      .addEventListener("click", function () {
+        refreshLogs();
+      });
+  });
+</script>
+{% endblock %} {% block content %}
 <div class="row mb-4">
   <div class="col-md-12">
     <div class="card">
@@ -213,36 +336,46 @@ endblock %} {% block content %}
   </div>
 </div>
 
-<div class="row">
+<div class="row mt-4">
   <div class="col-md-12">
-    <div class="card">
-      <div class="card-header bg-secondary text-white">
+    <div class="card border-0 shadow-sm" id="recent-activity-card">
+      <div
+        class="card-header bg-secondary text-white d-flex justify-content-between align-items-center"
+      >
         <h5 class="mb-0"><i class="fas fa-history me-2"></i>Recent Activity</h5>
+        <div>
+          <span id="last-refresh" class="small text-white-50"
+            >Auto-refreshing every 10 seconds</span
+          >
+          <button id="manual-refresh" class="btn btn-sm btn-light ms-2">
+            <i class="fas fa-sync-alt"></i> Refresh
+          </button>
+        </div>
       </div>
       <div class="card-body">
-        {% if logs and logs.items %}
         <div class="table-responsive">
-          <table class="table table-hover">
+          <table class="table table-hover" id="recent-activity">
             <thead>
               <tr>
                 <th>Timestamp</th>
                 <th>Message</th>
                 <th>Level</th>
+                <th>Group</th>
               </tr>
             </thead>
             <tbody>
-              {% for log in logs.items %}
+              {% if logs and logs.items %} {% for log in logs.items %}
               <tr
                 class="{% if log.level == 'error' %}table-danger{% elif log.level == 'warning' %}table-warning{% endif %}"
               >
-                <td>
+                <td style="white-space: nowrap">
                   {% if log.timestamp %} {% if log.timestamp is string %} {{
                   log.timestamp.split('T')[0] }} {{
                   log.timestamp.split('T')[1].split('.')[0] if 'T' in
                   log.timestamp and log.timestamp.split('T')|length > 1 else ''
                   }} {% else %} {{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S')
                   if log.timestamp is not string }} {% endif %} {% else %}
-                  Unknown time {% endif %}
+                  Unknown {% endif %}
                 </td>
                 <td>{{ log.message }}</td>
                 <td>
@@ -252,19 +385,32 @@ endblock %} {% block content %}
                     {{ log.level }}
                   </span>
                 </td>
+                <td>
+                  {% if log.group_id %}
+                  <a
+                    href="{{ url_for('main.logs', group_id=log.group_id) }}"
+                    class="btn btn-sm btn-outline-primary"
+                  >
+                    <i class="fas fa-eye"></i>
+                  </a>
+                  {% endif %}
+                </td>
               </tr>
-              {% endfor %}
+              {% endfor %} {% else %}
+              <tr>
+                <td colspan="4" class="text-center">
+                  <em>No logs available.</em>
+                </td>
+              </tr>
+              {% endif %}
             </tbody>
           </table>
         </div>
         <div class="text-center mt-3">
-          <a href="{{ url_for('main.logs') }}" class="btn btn-sm btn-primary"
-            >View All Logs</a
-          >
+          <a href="{{ url_for('main.logs') }}" class="btn btn-outline-primary">
+            <i class="fas fa-clipboard-list me-2"></i>View All Logs
+          </a>
         </div>
-        {% else %}
-        <div class="alert alert-info">No recent logs available.</div>
-        {% endif %}
       </div>
     </div>
   </div>

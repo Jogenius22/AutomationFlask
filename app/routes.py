@@ -2,95 +2,131 @@ import os
 import datetime
 import json
 import re
-from flask import Blueprint, render_template, redirect, url_for, request, flash, current_app, send_from_directory
+from flask import Blueprint, render_template, redirect, url_for, request, flash, current_app, send_from_directory, jsonify
 from werkzeug.utils import secure_filename
 from app.forms import AccountForm, CityForm, MessageForm, ScheduleForm, SettingsForm
+from app.data_manager import add_account, get_accounts, add_city, get_cities, add_message, get_messages
+from app.data_manager import add_schedule, get_schedules, add_log, get_account_by_id, update_account, update_city
+from app.data_manager import update_message, update_schedule, delete_account, delete_city, delete_message
+from app.data_manager import delete_schedule, get_settings, update_settings, LogManager
 import app.data_manager as dm
 from app.tasks import start_bot_task
 from config import SCREENSHOTS_DIR
 
+import time
+from datetime import datetime
+
 bp = Blueprint('main', __name__)
 
-# Utility class for pagination
 class Pagination:
-    """Simple pagination class similar to Flask-SQLAlchemy's Pagination"""
+    """Helper class for pagination that can be initialized with either a dictionary or direct parameters"""
+    def __init__(self, data=None, page=1, per_page=10, total=0, items=None):
+        if data is not None and isinstance(data, dict):
+            # Initialize from dictionary (old format)
+            self.page = data.get('page', 1)
+            self.per_page = data.get('per_page', 10)
+            self.total = data.get('total', 0)
+            self.items = data.get('items', [])
+            self.pages = data.get('pages', 0) or self._calculate_pages()
+        else:
+            # Initialize from parameters (new format)
+            self.page = page
+            self.per_page = per_page
+            self.total = total
+            self.items = items or []
+            self.pages = self._calculate_pages()
     
-    def __init__(self, data):
-        self.items = data['items']
-        self.page = data['page']
-        self.per_page = data['per_page']
-        self.total = data['total']
-        self.pages = data['pages']
-        self.has_prev = self.page > 1
-        self.has_next = self.page < self.pages
-        self.prev_num = self.page - 1 if self.page > 1 else None
-        self.next_num = self.page + 1 if self.page < self.pages else None
+    def _calculate_pages(self):
+        """Calculate the total number of pages"""
+        return max(1, (self.total + self.per_page - 1) // self.per_page)
     
-    def iter_pages(self):
-        return range(1, self.pages + 1)
+    def has_prev(self):
+        """Check if there is a previous page"""
+        return self.page > 1
+    
+    def has_next(self):
+        """Check if there is a next page"""
+        return self.page < self.pages
+    
+    def iter_pages(self, left_edge=2, left_current=2, right_current=3, right_edge=2):
+        """Iterate over page numbers with sensible defaults"""
+        last = 0
+        for num in range(1, self.pages + 1):
+            if (
+                num <= left_edge
+                or (num > self.page - left_current - 1 and num < self.page + right_current)
+                or num > self.pages - right_edge
+            ):
+                if last + 1 != num:
+                    yield None
+                yield num
+                last = num
 
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in current_app.config['ALLOWED_EXTENSIONS']
 
 @bp.route('/')
+@bp.route('/dashboard')
 def dashboard():
-    accounts = dm.get_accounts()
-    cities = dm.get_cities()
-    messages = dm.get_messages()
-    
-    # Get the latest logs with proper error handling
+    """Dashboard with account, city, message management and recent logs"""
     try:
-        logs_data = dm.get_logs(page=1, per_page=5)  # Just get the latest 5 logs
-        print(f"Dashboard: Retrieved logs data with {logs_data.get('total', 0)} total logs")
+        # Get accounts, cities, and messages for the dashboard
+        accounts = get_accounts()
+        cities = get_cities()
+        messages = get_messages()
         
-        if logs_data is None or not isinstance(logs_data, dict) or 'items' not in logs_data:
-            print(f"Dashboard: Invalid logs data structure: {logs_data}")
-            # If logs_data is not properly structured, initialize a default structure
-            logs_data = {'items': [], 'page': 1, 'pages': 0, 'total': 0, 'per_page': 5}
-        elif not logs_data.get('items'):
-            print("Dashboard: No logs found to display")
+        # Get latest logs for the recent activity section
+        try:
+            log_manager = LogManager()
+            logs_data = log_manager.get_logs(limit=5)  # Just get the latest 5 logs
+            
+            # Create pagination object for consistency
+            logs = Pagination(page=1, per_page=5, total=len(logs_data) if logs_data else 0, items=logs_data)
+        except Exception as e:
+            current_app.logger.error(f"Error loading logs: {e}")
+            logs = Pagination(page=1, per_page=5, total=0, items=[])
+        
+        # Check if this is an AJAX request for auto-refresh
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return jsonify({
+                'status': 'success',
+                'logs': logs_data
+            })
+            
+        # Format datetime fields for display
+        for item_list in [accounts, cities, messages]:
+            for item in item_list:
+                if 'created_at' in item and item['created_at']:
+                    try:
+                        if isinstance(item['created_at'], str):
+                            # Convert ISO format to more readable format
+                            dt = datetime.fromisoformat(item['created_at'].replace('Z', '+00:00'))
+                            item['created_at'] = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except Exception as e:
+                        current_app.logger.error(f"Error formatting datetime: {e}")
+                        
+                if 'last_used' in item and item['last_used']:
+                    try:
+                        if isinstance(item['last_used'], str):
+                            # Convert ISO format to more readable format
+                            dt = datetime.fromisoformat(item['last_used'].replace('Z', '+00:00'))
+                            item['last_used'] = dt.strftime('%Y-%m-%d %H:%M:%S')
+                    except Exception as e:
+                        current_app.logger.error(f"Error formatting last_used datetime: {e}")
+        
+        return render_template('dashboard.html', 
+                              accounts=accounts,
+                              cities=cities, 
+                              messages=messages,
+                              logs=logs,
+                              title="Dashboard")
+                              
     except Exception as e:
-        print(f"Error getting logs for dashboard: {e}")
-        logs_data = {'items': [], 'page': 1, 'pages': 0, 'total': 0, 'per_page': 5}
-        
-    settings = dm.get_settings()  # Get application settings
-    
-    # Format datetime fields for display
-    for account in accounts:
-        if account.get('last_used'):
-            try:
-                account['last_used'] = datetime.datetime.fromisoformat(account['last_used'])
-            except (ValueError, TypeError) as e:
-                print(f"Error formatting last_used date for account {account.get('email')}: {e}")
-                account['last_used'] = None
-    
-    for city in cities:
-        if city.get('created_at'):
-            try:
-                city['created_at'] = datetime.datetime.fromisoformat(city['created_at'])
-            except (ValueError, TypeError) as e:
-                print(f"Error formatting created_at date for city {city.get('name')}: {e}")
-                city['created_at'] = None
-    
-    scheduled_runs = []
-    try:
-        schedules = dm.get_schedules()
-        for schedule in schedules:
-            if schedule.get('active'):
-                scheduled_runs.append(schedule)
-    except Exception as e:
-        print(f"Error getting schedules: {str(e)}")
-        
-    print(f"Rendering dashboard with {len(logs_data.get('items', []))} logs")
-    return render_template('dashboard.html',
-                          title='Dashboard',
-                          accounts=accounts,
-                          cities=cities, 
-                          messages=messages,
-                          logs=Pagination(logs_data),
-                          settings=settings,
-                          scheduled_runs=scheduled_runs)
+        error_msg = f"Error loading dashboard: {str(e)}"
+        current_app.logger.error(error_msg)
+        flash(error_msg, 'danger')
+        return render_template('dashboard.html', title="Dashboard - Error Loading Data")
 
 @bp.route('/accounts', methods=['GET', 'POST'])
 def accounts():
@@ -237,112 +273,136 @@ def start_bot():
 
 @bp.route('/logs')
 def logs():
+    """Display system logs or specific logs for a group ID."""
+    group_id = request.args.get('group_id')
     page = request.args.get('page', 1, type=int)
-    group_id = request.args.get('group_id', None)
+    per_page = 50  # Number of logs per page
     
-    # Default logs data structure if errors occur
-    default_logs = {'items': [], 'page': 1, 'pages': 0, 'total': 0, 'per_page': 50}
-    
-    # If specific group_id is provided, show logs for that group only
-    if group_id:
-        try:
-            logs_data = dm.get_logs(page=page, per_page=50, group_id=group_id)
-            
-            # Ensure logs_data has the proper structure
-            if not isinstance(logs_data, dict) or 'items' not in logs_data:
-                print(f"Invalid logs data structure for group {group_id}: {logs_data}")
-                logs_data = default_logs
-            elif not logs_data.get('items'):
-                print(f"No logs found for group {group_id}")
-            
-            # Check if there are bot start messages to extract account info
-            account_info = {}
-            for log in logs_data.get('items', []):
-                if "Starting bot for account" in log.get('message', ''):
-                    try:
-                        match = re.search(r"Starting bot for account: (\w+)", log.get('message', ''))
-                        if match:
-                            account_id = match.group(1)
-                            account = dm.get_account_by_id(account_id)
-                            if account:
-                                account_info = account
-                                break
-                    except Exception as e:
-                        print(f"Error extracting account info: {e}")
-            
-            return render_template('logs.html', logs=logs_data, group_id=group_id, 
-                                  account_info=account_info, title='Bot Run Logs')
-        except Exception as e:
-            print(f"Error retrieving logs for group {group_id}: {str(e)}")
-            flash(f"Error retrieving logs: {str(e)}", 'danger')
-            return render_template('logs.html', logs=default_logs, group_id=group_id, title='Bot Run Logs')
-    
-    # Otherwise show general logs and find unique group_ids for bot runs
     try:
-        logs_data = dm.get_logs(page=page, per_page=50)
+        log_manager = LogManager()
         
-        # Ensure logs_data has the proper structure 
-        if not isinstance(logs_data, dict) or 'items' not in logs_data:
-            print(f"Invalid logs data structure: {logs_data}")
-            logs_data = default_logs
-        elif not logs_data.get('items'):
-            print("No logs found")
+        # If group_id is provided, get logs for that specific group
+        if group_id:
+            logs_data = log_manager.get_logs(group_id=group_id)
+            
+            # Extract account info if this is a bot start log group
+            account_info = {}
+            if logs_data and isinstance(logs_data, list):
+                for log in logs_data:
+                    if 'Starting bot with account' in log.get('message', ''):
+                        # Extract account details from the message
+                        message = log.get('message', '')
+                        try:
+                            # Find the JSON part in the message
+                            import re
+                            import json
+                            json_match = re.search(r'\{.*\}', message)
+                            if json_match:
+                                account_data = json.loads(json_match.group(0))
+                                account_info = account_data
+                        except Exception as e:
+                            current_app.logger.error(f"Error extracting account info: {str(e)}")
+            
+            # Paginate the logs
+            total_logs = len(logs_data) if logs_data else 0
+            start_idx = (page - 1) * per_page
+            end_idx = min(start_idx + per_page, total_logs)
+            logs_subset = logs_data[start_idx:end_idx] if logs_data else []
+            
+            # Create a pagination object
+            logs_pagination = Pagination(page=page, 
+                                         per_page=per_page, 
+                                         total=total_logs, 
+                                         items=logs_subset)
+            
+            return render_template('logs.html', 
+                                  logs=logs_pagination, 
+                                  group_id=group_id,
+                                  account_info=account_info,
+                                  title=f"Bot Run Logs - {group_id[:8]}")
         
-        # Find unique group_ids for bot runs (limited to last 10)
-        bot_runs = []
-        
-        # Check if LOGS_FILE exists first
-        if os.path.exists(dm.LOGS_FILE):
-            try:
-                with open(dm.LOGS_FILE, 'r') as f:
-                    all_logs = json.load(f)
-                    
-                    # Extract unique group_ids with their timestamps
-                    group_data = {}
-                    for log in all_logs:
-                        if log.get('group_id') and "Starting bot" in log.get('message', ''):
-                            group_id = log.get('group_id')
-                            if group_id not in group_data:
-                                timestamp = log.get('timestamp', '')
-                                account_match = re.search(r"Starting bot for account: (\w+)", log.get('message', ''))
-                                account_id = account_match.group(1) if account_match else None
-                                
-                                group_data[group_id] = {
-                                    'timestamp': timestamp,
-                                    'account_id': account_id
-                                }
-                    
-                    # Sort by timestamp (most recent first) and get top 10
-                    sorted_groups = sorted(group_data.items(), 
-                                          key=lambda x: x[1]['timestamp'] if x[1]['timestamp'] else '', 
-                                          reverse=True)
-                    
-                    for group_id, data in sorted_groups[:10]:
-                        account_name = None
-                        if data.get('account_id'):
-                            account = dm.get_account_by_id(data['account_id'])
-                            if account:
-                                account_name = account.get('username', 'Unknown')
+        # Otherwise, get general logs
+        else:
+            # Get the latest logs
+            logs_data = log_manager.get_logs(limit=1000)  # Get a large number to find all groups
+            
+            # Find unique group IDs for bot runs
+            bot_runs = []
+            group_ids = set()
+            if logs_data and isinstance(logs_data, list):
+                for log in logs_data:
+                    group_id = log.get('group_id')
+                    if group_id and group_id not in group_ids:
+                        group_ids.add(group_id)
+                        timestamp = log.get('timestamp')
                         
+                        # Look for account name
+                        account_name = "Unknown"
+                        if 'Starting bot with account' in log.get('message', ''):
+                            message = log.get('message', '')
+                            try:
+                                import re
+                                import json
+                                json_match = re.search(r'\{.*\}', message)
+                                if json_match:
+                                    account_data = json.loads(json_match.group(0))
+                                    account_name = account_data.get('username', 'Unknown')
+                            except Exception as e:
+                                pass
+                                
                         bot_runs.append({
                             'group_id': group_id,
-                            'timestamp': data['timestamp'],
+                            'timestamp': timestamp,
                             'account_name': account_name
                         })
-            except Exception as e:
-                print(f"Error loading bot runs: {e}")
-                
-        # Double check logs_data is correct before passing to template
-        if logs_data is None or not isinstance(logs_data, dict) or 'items' not in logs_data:
-            print("Logs data is None or invalid after processing")
-            logs_data = default_logs
-        
-        print(f"Rendering logs.html with {len(logs_data.get('items', []))} logs for page {logs_data.get('page', 1)}")
-        return render_template('logs.html', logs=Pagination(logs_data), bot_runs=bot_runs, title='System Logs')
+            
+            # Sort bot runs by timestamp (newest first)
+            bot_runs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            
+            # Paginate the general logs
+            logs_data = log_manager.get_logs(limit=per_page, offset=(page-1)*per_page)
+            total_logs = log_manager.count_logs()
+            
+            # Create a pagination object
+            logs_pagination = Pagination(page=page, 
+                                         per_page=per_page, 
+                                         total=total_logs, 
+                                         items=logs_data)
+            
+            return render_template('logs.html', 
+                                  logs=logs_pagination, 
+                                  bot_runs=bot_runs[:10],  # Show only the 10 most recent bot runs
+                                  title="System Logs")
+    
     except Exception as e:
-        print(f"Error retrieving logs: {str(e)}")
-        flash(f"Error retrieving logs: {str(e)}", 'danger')
-        return render_template('logs.html', logs=Pagination(default_logs), title='System Logs')
+        error_msg = f"Error retrieving logs: {str(e)}"
+        current_app.logger.error(error_msg)
+        flash(error_msg, 'danger')
+        return render_template('logs.html', 
+                              logs=Pagination(page=1, per_page=per_page, total=0, items=[]),
+                              error=error_msg,
+                              title="Logs - Error")
+
+@bp.route('/api/recent_logs')
+def api_recent_logs():
+    """API endpoint to get recent logs for AJAX auto-refresh."""
+    try:
+        log_manager = LogManager()
+        logs_data = log_manager.get_logs(limit=20)  # Get the 20 most recent logs
+        
+        # Return JSON response
+        return jsonify({
+            'status': 'success',
+            'logs': logs_data
+        })
+    except Exception as e:
+        error_msg = f"Error retrieving logs: {str(e)}"
+        current_app.logger.error(error_msg)
+        return jsonify({
+            'status': 'error',
+            'message': error_msg,
+            'logs': []
+        }), 500
 
 @bp.route('/settings', methods=['GET', 'POST'])
 def settings():
@@ -441,4 +501,14 @@ def screenshots():
 
 @bp.route('/screenshot/<filename>')
 def get_screenshot(filename):
-    return send_from_directory(SCREENSHOTS_DIR, filename) 
+    return send_from_directory(SCREENSHOTS_DIR, filename)
+
+@bp.route('/screenshots/<path:filename>')
+def screenshots(filename):
+    """Serve screenshot files"""
+    try:
+        return send_from_directory(SCREENSHOTS_DIR, filename)
+    except Exception as e:
+        error_msg = f"Error serving screenshot {filename}: {str(e)}"
+        current_app.logger.error(error_msg)
+        return jsonify({'error': error_msg}), 404 

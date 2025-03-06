@@ -1,5 +1,55 @@
 {% extends 'base.html' %} {% block title %}{% if title %}{{ title }}{% else
-%}Logs - Airtasker Bot Manager{% endif %}{% endblock %} {% block content %}
+%}Logs - Airtasker Bot Manager{% endif %}{% endblock %} {% block extra_head %}
+<script>
+  // Auto-refresh logs function
+  function refreshLogs() {
+    fetch(
+      window.location.href +
+        (window.location.search ? "&" : "?") +
+        "_t=" +
+        new Date().getTime(),
+      {
+        headers: {
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      }
+    )
+      .then((response) => response.text())
+      .then((html) => {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+
+        // Get the log table body
+        const newLogsTbody = doc.querySelector(".log-table tbody");
+        const currentLogsTbody = document.querySelector(".log-table tbody");
+
+        if (newLogsTbody && currentLogsTbody) {
+          currentLogsTbody.innerHTML = newLogsTbody.innerHTML;
+        }
+
+        // Update pagination if it exists
+        const newPagination = doc.querySelector(".log-pagination");
+        const currentPagination = document.querySelector(".log-pagination");
+
+        if (newPagination && currentPagination) {
+          currentPagination.innerHTML = newPagination.innerHTML;
+        }
+      })
+      .catch((error) => {
+        console.error("Error refreshing logs:", error);
+      });
+  }
+
+  // Set interval for auto-refresh (every 10 seconds)
+  document.addEventListener("DOMContentLoaded", function () {
+    // Initial load
+    setInterval(refreshLogs, 10000);
+
+    // Log the auto-refresh is active
+    console.log("Auto-refresh is active, logs will update every 10 seconds");
+  });
+</script>
+{% endblock %} {% block content %}
 <div class="container my-4">
   <div class="row">
     <div class="col-12">
@@ -76,17 +126,25 @@
       <!-- Main Logs Card -->
       <div class="card border-0 shadow-sm">
         <div
-          class="card-header {% if group_id %}bg-info{% else %}bg-secondary{% endif %} text-white"
+          class="card-header {% if group_id %}bg-info{% else %}bg-secondary{% endif %} text-white d-flex justify-content-between align-items-center"
         >
           <h5 class="mb-0">
             {% if group_id %}
             <i class="fas fa-clipboard-list me-2"></i>Detailed Bot Run Logs {%
             else %} <i class="fas fa-list me-2"></i>System Logs {% endif %}
           </h5>
+          <div>
+            <span id="last-refresh" class="small text-white-50"
+              >Auto-refreshing every 10 seconds</span
+            >
+            <button id="manual-refresh" class="btn btn-sm btn-light ms-2">
+              <i class="fas fa-sync-alt"></i> Refresh
+            </button>
+          </div>
         </div>
         <div class="card-body">
           <div class="table-responsive">
-            <table class="table table-hover">
+            <table class="table table-hover log-table">
               <thead>
                 <tr>
                   <th>Timestamp</th>
@@ -148,13 +206,15 @@
 
           <!-- Pagination -->
           {% if logs.pages and logs.pages > 1 %}
-          <nav aria-label="Log navigation">
+          <nav aria-label="Log navigation" class="log-pagination">
             <ul class="pagination justify-content-center">
               <!-- Previous page -->
-              <li class="page-item {% if logs.page == 1 %}disabled{% endif %}">
+              <li
+                class="page-item {% if not logs.has_prev() %}disabled{% endif %}"
+              >
                 <a
                   class="page-link"
-                  href="{{ url_for('main.logs', page=logs.page-1, group_id=group_id) if logs.page > 1 else '#' }}"
+                  href="{{ url_for('main.logs', page=logs.page-1, group_id=group_id) if logs.has_prev() else '#' }}"
                   aria-label="Previous"
                 >
                   <span aria-hidden="true">&laquo;</span>
@@ -162,10 +222,7 @@
               </li>
 
               <!-- Page numbers -->
-              {% set start_page = [logs.page - 2, 1] | max %} {% set end_page =
-              [start_page + 4, logs.pages] | min %} {% set start_page =
-              [end_page - 4, 1] | max %} {% for page_num in range(start_page,
-              end_page + 1) %}
+              {% for page_num in logs.iter_pages() %} {% if page_num %}
               <li
                 class="page-item {% if page_num == logs.page %}active{% endif %}"
               >
@@ -175,15 +232,19 @@
                   >{{ page_num }}</a
                 >
               </li>
-              {% endfor %}
+              {% else %}
+              <li class="page-item disabled">
+                <span class="page-link">…</span>
+              </li>
+              {% endif %} {% endfor %}
 
               <!-- Next page -->
               <li
-                class="page-item {% if logs.page == logs.pages %}disabled{% endif %}"
+                class="page-item {% if not logs.has_next() %}disabled{% endif %}"
               >
                 <a
                   class="page-link"
-                  href="{{ url_for('main.logs', page=logs.page+1, group_id=group_id) if logs.page < logs.pages else '#' }}"
+                  href="{{ url_for('main.logs', page=logs.page+1, group_id=group_id) if logs.has_next() else '#' }}"
                   aria-label="Next"
                 >
                   <span aria-hidden="true">&raquo;</span>
@@ -216,14 +277,12 @@
           <div class="col-md-4 mb-3">
             <div class="card">
               <img
-                src="{{ url_for('static', filename=screenshot) }}"
+                src="{{ url_for('static', filename='screenshots/' + screenshot) }}"
                 class="card-img-top img-thumbnail"
                 alt="Screenshot"
               />
               <div class="card-body p-2">
-                <small class="text-muted"
-                  >{{ screenshot.split('/')[-1] }}</small
-                >
+                <small class="text-muted">{{ screenshot }}</small>
               </div>
             </div>
           </div>
@@ -250,21 +309,37 @@
       </div>
       <div class="card-body">
         <p>
-          {% if group_id %} This page displays detailed logs for a specific bot
-          run, showing all actions and events in chronological order. {% else %}
-          This page displays system logs for all bot activities and operations.
-          {% endif %}
+          This page displays system logs and detailed bot run logs. The logs are
+          automatically refreshed every 10 seconds.
         </p>
-        <p class="mb-0">
-          <span class="badge bg-success">info</span> - Normal operation
-          information<br />
-          <span class="badge bg-warning">warning</span> - Non-critical
-          warnings<br />
-          <span class="badge bg-danger">error</span> - Errors that prevented
-          successful operation
-        </p>
+        <ul>
+          <li>
+            <span class="badge bg-success">info</span> Normal operation logs
+          </li>
+          <li>
+            <span class="badge bg-warning">warning</span> Warning messages that
+            may require attention
+          </li>
+          <li>
+            <span class="badge bg-danger">error</span> Error logs that indicate
+            a problem
+          </li>
+        </ul>
       </div>
     </div>
   </div>
 </div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    // Add manual refresh functionality
+    document
+      .getElementById("manual-refresh")
+      .addEventListener("click", function () {
+        refreshLogs();
+        document.getElementById("last-refresh").textContent =
+          "Last refreshed: " + new Date().toLocaleTimeString();
+      });
+  });
+</script>
 {% endblock %}

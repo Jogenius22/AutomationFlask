@@ -1,9 +1,13 @@
 import json
 import os
 import uuid
+import time
+import random
 from datetime import datetime
 from config import ACCOUNTS_FILE, CITIES_FILE, MESSAGES_FILE, SCHEDULES_FILE, LOGS_FILE, SETTINGS_FILE
 import math
+
+LOG_LEVEL_FILTER = os.environ.get('LOG_LEVEL_FILTER', 'automation')  # Set to 'all', 'automation', or 'essential'
 
 def generate_id():
     """Generate a unique ID for new records"""
@@ -15,12 +19,60 @@ def datetime_converter(obj):
         return obj.isoformat()
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
+def _read_file_with_retry(file_path, max_retries=3):
+    """Read a JSON file with retry mechanism to handle transient errors"""
+    retries = 0
+    while retries < max_retries:
+        try:
+            if os.path.exists(file_path):
+                with open(file_path, 'r') as f:
+                    return json.load(f)
+            return []
+        except json.JSONDecodeError as e:
+            print(f"JSON error reading {file_path}: {e}. Retry {retries+1}/{max_retries}")
+            retries += 1
+            time.sleep(random.uniform(0.5, 2.0))  # Random backoff
+            if retries == max_retries - 1:  # Last retry
+                # Try to backup the corrupted file and create a new one
+                backup_path = f"{file_path}.corrupted.{int(time.time())}"
+                try:
+                    if os.path.exists(file_path):
+                        os.rename(file_path, backup_path)
+                        print(f"Backed up corrupted file to {backup_path}")
+                except Exception as rename_e:
+                    print(f"Failed to backup corrupted file: {rename_e}")
+                return []
+
+def _write_file_with_retry(file_path, data, max_retries=3):
+    """Write data to a JSON file with retry mechanism for resilience"""
+    # First, ensure the directory exists
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
+    retries = 0
+    while retries < max_retries:
+        try:
+            # Write to a temporary file first
+            temp_file = f"{file_path}.tmp"
+            with open(temp_file, 'w') as f:
+                json.dump(data, f, indent=4)
+            
+            # Force flush to disk
+            os.fsync(f.fileno())
+            
+            # Rename to actual file (atomic operation on most filesystems)
+            os.replace(temp_file, file_path)
+            return True
+        except Exception as e:
+            print(f"Error writing {file_path}: {e}. Retry {retries+1}/{max_retries}")
+            retries += 1
+            time.sleep(random.uniform(0.5, 2.0))  # Random backoff
+    
+    print(f"Failed to write to {file_path} after {max_retries} attempts")
+    return False
+
 def get_accounts():
     """Get all accounts from JSON file"""
-    if os.path.exists(ACCOUNTS_FILE):
-        with open(ACCOUNTS_FILE, 'r') as f:
-            return json.load(f)
-    return []
+    return _read_file_with_retry(ACCOUNTS_FILE)
 
 def add_account(email, password, active=True):
     """Add a new account to JSON file"""
@@ -34,16 +86,12 @@ def add_account(email, password, active=True):
         'created_at': datetime.utcnow().isoformat()
     }
     accounts.append(new_account)
-    with open(ACCOUNTS_FILE, 'w') as f:
-        json.dump(accounts, f, indent=4)
+    _write_file_with_retry(ACCOUNTS_FILE, accounts)
     return new_account
 
 def get_cities():
     """Get all cities from JSON file"""
-    if os.path.exists(CITIES_FILE):
-        with open(CITIES_FILE, 'r') as f:
-            return json.load(f)
-    return []
+    return _read_file_with_retry(CITIES_FILE)
 
 def add_city(name, radius):
     """Add a new city to JSON file"""
@@ -55,16 +103,12 @@ def add_city(name, radius):
         'created_at': datetime.utcnow().isoformat()
     }
     cities.append(new_city)
-    with open(CITIES_FILE, 'w') as f:
-        json.dump(cities, f, indent=4)
+    _write_file_with_retry(CITIES_FILE, cities)
     return new_city
 
 def get_messages():
     """Get all messages from JSON file"""
-    if os.path.exists(MESSAGES_FILE):
-        with open(MESSAGES_FILE, 'r') as f:
-            return json.load(f)
-    return []
+    return _read_file_with_retry(MESSAGES_FILE)
 
 def add_message(content, image=None):
     """Add a new message to JSON file"""
@@ -77,16 +121,12 @@ def add_message(content, image=None):
         'last_used': None
     }
     messages.append(new_message)
-    with open(MESSAGES_FILE, 'w') as f:
-        json.dump(messages, f, indent=4)
+    _write_file_with_retry(MESSAGES_FILE, messages)
     return new_message
 
 def get_schedules():
     """Get all schedules from JSON file"""
-    if os.path.exists(SCHEDULES_FILE):
-        with open(SCHEDULES_FILE, 'r') as f:
-            return json.load(f)
-    return []
+    return _read_file_with_retry(SCHEDULES_FILE)
 
 def add_schedule(start_time, end_time, active=True):
     """Add a new schedule to JSON file"""
@@ -99,11 +139,10 @@ def add_schedule(start_time, end_time, active=True):
         'created_at': datetime.utcnow().isoformat()
     }
     schedules.append(new_schedule)
-    with open(SCHEDULES_FILE, 'w') as f:
-        json.dump(schedules, f, indent=4)
+    _write_file_with_retry(SCHEDULES_FILE, schedules)
     return new_schedule
 
-def get_logs(page=1, per_page=10, group_id=None):
+def get_logs(page=1, per_page=10, group_id=None, log_level_filter=None):
     """
     Get logs from the log file with pagination
     
@@ -111,6 +150,7 @@ def get_logs(page=1, per_page=10, group_id=None):
         page (int): Page number (1-indexed)
         per_page (int): Number of logs per page
         group_id (str, optional): Filter logs by group_id
+        log_level_filter (str, optional): Filter logs by category ('all', 'automation', 'essential')
         
     Returns:
         dict: Dictionary with logs and pagination information
@@ -120,27 +160,29 @@ def get_logs(page=1, per_page=10, group_id=None):
         page = max(1, int(page))
         per_page = max(1, int(per_page))
         
-        if os.path.exists(LOGS_FILE):
-            try:
-                with open(LOGS_FILE, 'r') as f:
-                    logs = json.load(f)
-                print(f"Successfully loaded {len(logs)} logs from {LOGS_FILE}")
-            except json.JSONDecodeError as e:
-                print(f"JSON decode error when loading logs: {e}")
-                logs = []
-        else:
-            print(f"Logs file not found at {LOGS_FILE}")
-            logs = []
+        # Apply default log level filter if none provided
+        if not log_level_filter:
+            log_level_filter = LOG_LEVEL_FILTER
         
-        # Make sure logs is a list
-        if not isinstance(logs, list):
-            print(f"Logs is not a list, it's a {type(logs)}")
-            logs = []
+        logs = _read_file_with_retry(LOGS_FILE)
+        print(f"Successfully loaded {len(logs)} logs from {LOGS_FILE}")
             
         # Filter by group_id if provided
         if group_id:
             filtered_logs = [log for log in logs if log.get('group_id') == group_id]
             print(f"Filtered logs by group_id {group_id}: {len(filtered_logs)} of {len(logs)} logs match")
+            logs = filtered_logs
+            
+        # Filter by category
+        if log_level_filter == 'automation':
+            # Only show logs from the automation process, not init/setup logs
+            filtered_logs = [log for log in logs if log.get('category') in 
+                            ['automation', 'essential', None]]
+            logs = filtered_logs
+        elif log_level_filter == 'essential':
+            # Only show essential logs (success, error, warnings)
+            filtered_logs = [log for log in logs if log.get('category') == 'essential' or 
+                            log.get('level') in ['error', 'warning', 'success']]
             logs = filtered_logs
             
         # Sort logs by timestamp (newest first)
@@ -163,7 +205,6 @@ def get_logs(page=1, per_page=10, group_id=None):
             'per_page': per_page,
             'pages': total_pages
         }
-        print(f"Returning {len(page_logs)} logs for page {page} of {total_pages}")
         return result
     except Exception as e:
         print(f"Error getting logs: {str(e)}")
@@ -176,31 +217,22 @@ def get_logs(page=1, per_page=10, group_id=None):
             'pages': 0
         }
 
-def add_log(message, level='info', group_id=None):
+def add_log(message, level='info', group_id=None, category='automation'):
     """
     Add a log entry to the log file
     
     Args:
         message (str): Log message
-        level (str): Log level (info, warning, error)
+        level (str): Log level (info, warning, error, success)
         group_id (str, optional): Group ID to associate related logs together
+        category (str, optional): Category of log ('setup', 'automation', 'essential')
         
     Returns:
         dict: The log entry that was added
     """
     try:
         # Load existing logs or create empty list
-        logs = []
-        if os.path.exists(LOGS_FILE):
-            try:
-                with open(LOGS_FILE, 'r') as f:
-                    logs = json.load(f)
-                print(f"Successfully loaded {len(logs)} existing logs from {LOGS_FILE}")
-            except json.JSONDecodeError:
-                print(f"JSON decode error when loading logs file. Creating new logs array.")
-                logs = []  # Reset logs if file is corrupted
-        else:
-            print(f"Logs file not found at {LOGS_FILE}. Creating new file.")
+        logs = _read_file_with_retry(LOGS_FILE)
         
         # Sanitize message for JSON compatibility
         if message is not None:
@@ -214,15 +246,13 @@ def add_log(message, level='info', group_id=None):
             'id': str(uuid.uuid4()),
             'message': message,
             'level': level,
+            'category': category,
             'timestamp': datetime.now().isoformat()
         }
         
         # Add group_id if provided
         if group_id:
             log_entry['group_id'] = group_id
-            print(f"Adding log with group_id {group_id}: {message[:50]}...")
-        else:
-            print(f"Adding log without group_id: {message[:50]}...")
         
         # Append new log
         logs.append(log_entry)
@@ -234,10 +264,10 @@ def add_log(message, level='info', group_id=None):
         logs = logs[:1000]
         
         # Write logs back to file
-        with open(LOGS_FILE, 'w') as f:
-            json.dump(logs, f, indent=4)
+        success = _write_file_with_retry(LOGS_FILE, logs)
+        if not success:
+            print(f"WARNING: Could not save log: {message[:50]}...")
         
-        print(f"Successfully saved {len(logs)} logs to {LOGS_FILE}")
         return log_entry
     except Exception as e:
         print(f"Error adding log: {str(e)}")
@@ -245,6 +275,7 @@ def add_log(message, level='info', group_id=None):
             'id': str(uuid.uuid4()),
             'message': f"Error adding log: {str(e)}",
             'level': 'error',
+            'category': 'essential',
             'timestamp': datetime.now().isoformat()
         }
 
@@ -298,23 +329,20 @@ def update_account_last_used(account_id):
             account['last_used'] = datetime.utcnow().isoformat()
             break
     
-    with open(ACCOUNTS_FILE, 'w') as f:
-        json.dump(accounts, f, indent=4)
+    _write_file_with_retry(ACCOUNTS_FILE, accounts)
 
 def delete_account(account_id):
     """Delete an account by ID"""
     accounts = get_accounts()
     accounts = [account for account in accounts if account['id'] != account_id]
-    with open(ACCOUNTS_FILE, 'w') as f:
-        json.dump(accounts, f, indent=4)
+    _write_file_with_retry(ACCOUNTS_FILE, accounts)
     return True
 
 def delete_city(city_id):
     """Delete a city by ID"""
     cities = get_cities()
     cities = [city for city in cities if city['id'] != city_id]
-    with open(CITIES_FILE, 'w') as f:
-        json.dump(cities, f, indent=4)
+    _write_file_with_retry(CITIES_FILE, cities)
     return True
 
 def delete_message(message_id):
@@ -330,8 +358,7 @@ def delete_message(message_id):
     # Filter out the message to be deleted
     messages = [message for message in messages if message['id'] != message_id]
     
-    with open(MESSAGES_FILE, 'w') as f:
-        json.dump(messages, f, indent=4)
+    _write_file_with_retry(MESSAGES_FILE, messages)
     
     # Return the image filename if it exists, so it can be deleted from the filesystem
     return image_to_delete
@@ -340,8 +367,7 @@ def delete_schedule(schedule_id):
     """Delete a schedule by ID"""
     schedules = get_schedules()
     schedules = [schedule for schedule in schedules if schedule['id'] != schedule_id]
-    with open(SCHEDULES_FILE, 'w') as f:
-        json.dump(schedules, f, indent=4)
+    _write_file_with_retry(SCHEDULES_FILE, schedules)
     return True
 
 def update_last_used(account_id):
@@ -350,7 +376,131 @@ def update_last_used(account_id):
     for account in accounts:
         if account['id'] == account_id:
             account['last_used'] = datetime.utcnow().isoformat()
-            with open(ACCOUNTS_FILE, 'w') as f:
-                json.dump(accounts, f, indent=4)
+            _write_file_with_retry(ACCOUNTS_FILE, accounts)
             return True
-    return False 
+    return False
+
+def update_account(account_id, **kwargs):
+    """Update an existing account"""
+    accounts = get_accounts()
+    for account in accounts:
+        if account.get('id') == account_id:
+            account.update(kwargs)
+            _write_file_with_retry(ACCOUNTS_FILE, accounts)
+            return account
+    return None
+
+def update_city(city_id, **kwargs):
+    """Update an existing city"""
+    cities = get_cities()
+    for city in cities:
+        if city.get('id') == city_id:
+            city.update(kwargs)
+            _write_file_with_retry(CITIES_FILE, cities)
+            return city
+    return None
+
+def update_message(message_id, **kwargs):
+    """Update an existing message"""
+    messages = get_messages()
+    for message in messages:
+        if message.get('id') == message_id:
+            message.update(kwargs)
+            _write_file_with_retry(MESSAGES_FILE, messages)
+            return message
+    return None
+
+class LogManager:
+    """Class to manage log operations with enhanced functionality"""
+    
+    def __init__(self):
+        self.logs_file = LOGS_FILE
+    
+    def get_logs(self, limit=None, offset=0, group_id=None, log_level_filter=None):
+        """
+        Get logs with more flexible options for API endpoints
+        
+        Args:
+            limit (int, optional): Maximum number of logs to return
+            offset (int, optional): Number of logs to skip
+            group_id (str, optional): Filter logs by group_id
+            log_level_filter (str, optional): Filter logs by category ('all', 'automation', 'essential')
+            
+        Returns:
+            list: List of log entries
+        """
+        try:
+            # Apply default log level filter if none provided
+            if not log_level_filter:
+                log_level_filter = LOG_LEVEL_FILTER
+            
+            logs = _read_file_with_retry(self.logs_file)
+            if logs is None:
+                return []
+                
+            # Filter by group_id if provided
+            if group_id:
+                logs = [log for log in logs if log.get('group_id') == group_id]
+                
+            # Filter by category
+            if log_level_filter == 'automation':
+                # Only show logs from the automation process, not init/setup logs
+                logs = [log for log in logs if log.get('category') in 
+                        ['automation', 'essential', None]]
+            elif log_level_filter == 'essential':
+                # Only show essential logs (success, error, warnings)
+                logs = [log for log in logs if log.get('category') == 'essential' or 
+                        log.get('level') in ['error', 'warning', 'success']]
+                
+            # Sort logs by timestamp (newest first)
+            logs = sorted(logs, key=lambda x: x.get('timestamp', ''), reverse=True)
+            
+            # Apply offset and limit
+            if offset > 0:
+                logs = logs[offset:]
+            if limit is not None:
+                logs = logs[:limit]
+            
+            return logs
+            
+        except Exception as e:
+            print(f"LogManager: Error getting logs: {str(e)}")
+            return []
+    
+    def count_logs(self, group_id=None, log_level_filter=None):
+        """
+        Count the total number of logs matching the filters
+        
+        Args:
+            group_id (str, optional): Filter logs by group_id
+            log_level_filter (str, optional): Filter logs by category
+            
+        Returns:
+            int: Total number of logs
+        """
+        try:
+            # Apply default log level filter if none provided
+            if not log_level_filter:
+                log_level_filter = LOG_LEVEL_FILTER
+            
+            logs = _read_file_with_retry(self.logs_file)
+            if logs is None:
+                return 0
+                
+            # Filter by group_id if provided
+            if group_id:
+                logs = [log for log in logs if log.get('group_id') == group_id]
+                
+            # Filter by category
+            if log_level_filter == 'automation':
+                logs = [log for log in logs if log.get('category') in 
+                        ['automation', 'essential', None]]
+            elif log_level_filter == 'essential':
+                logs = [log for log in logs if log.get('category') == 'essential' or 
+                        log.get('level') in ['error', 'warning', 'success']]
+            
+            return len(logs)
+            
+        except Exception as e:
+            print(f"LogManager: Error counting logs: {str(e)}")
+            return 0 
