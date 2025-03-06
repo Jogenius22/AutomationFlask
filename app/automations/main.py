@@ -89,35 +89,31 @@ USER_AGENTS = [
 # ------------------------------
 def save_screenshot(driver, name_prefix, group_id=None):
     """
-    Save a screenshot with the given prefix.
+    Take a screenshot of the current browser state and save it with a timestamp.
+    Returns the filepath of the saved screenshot or None if failed.
     """
-    try:
-        # Get the screenshot directory from environment or use a default
-        screenshot_dir = os.environ.get('SCREENSHOT_DIR', 
-                                       os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
-                                                   'data', 'screenshots'))
+    if not driver:
+        print("Cannot take screenshot: driver is None")
+        return None
         
-        # Ensure the directory exists
+    try:
+        # Get the screenshot directory from environment
+        screenshot_dir = os.environ.get('SCREENSHOT_DIR', '/tmp')
+        
+        # Ensure directory exists
         os.makedirs(screenshot_dir, exist_ok=True)
         
-        # Generate filename with timestamp to avoid overwrites
+        # Generate filename with timestamp
         timestamp = int(time.time())
         filename = f"{name_prefix}_{timestamp}.png"
         filepath = os.path.join(screenshot_dir, filename)
         
-        # Take the screenshot
+        # Save the screenshot
         driver.save_screenshot(filepath)
-        
-        # Add log for the screenshot
-        from app.data_manager import add_log
-        try:
-            add_log(f"Screenshot saved: {filename}", level="info", group_id=group_id, category="screenshot")
-        except Exception as e:
-            print(f"Error adding log: {e}")
-        
+        print(f"Screenshot saved: {filepath}")
         return filepath
     except Exception as e:
-        print(f"Error saving screenshot {name_prefix}: {e}")
+        print(f"Error taking screenshot '{name_prefix}': {str(e)}")
         return None
 
 
@@ -290,50 +286,97 @@ class Capsolver(Extension):
 def init_driver(group_id=None):
     """
     Initialize the Selenium WebDriver with proper configuration.
+    Designed specifically to work in Cloud environments.
     """
     try:
-        user_agent = random.choice(USER_AGENTS)
-        chrome_options = Options()
+        # Detect environment
+        is_gcp = os.getenv('GAE_ENV', '').startswith('standard')
+        is_cloud = bool(os.getenv('CLOUD_ENV', False))
+        is_docker = os.path.exists('/.dockerenv')
+        cloud_environment = is_gcp or is_cloud or is_docker
         
-        # Standard anti-detection options
+        # Create a dedicated tmp directory for Chrome
+        chrome_tmp_dir = '/tmp/chrome'
+        os.makedirs(chrome_tmp_dir, exist_ok=True)
+        
+        # Select a random user agent
+        user_agent = random.choice(USER_AGENTS)
+        
+        # Configure Chrome options for cloud environment
+        chrome_options = Options()
         chrome_options.add_argument(f"--user-agent={user_agent}")
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
         chrome_options.add_argument("--disable-infobars")
+        
+        # Crucial flags for containerized environments
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
         
-        # Get Capsolver API key from settings or use default
-        capsolver_key = "CAP-F79C6D0E7A810348A201783E25287C6003CFB45BBDCB670F96E525E7C0132148"
-        try:
-            from app.data_manager import get_settings
-            settings = get_settings()
-            if settings.get('capsolver_key'):
-                capsolver_key = settings.get('capsolver_key')
-        except Exception as e:
-            print(f"Could not get Capsolver key from settings: {e}")
+        # Use explicit tmp directory
+        chrome_options.add_argument(f"--user-data-dir={chrome_tmp_dir}/profile")
+        chrome_options.add_argument(f"--crash-dumps-dir={chrome_tmp_dir}")
+        chrome_options.add_argument(f"--disk-cache-dir={chrome_tmp_dir}/cache")
         
-        # Load the Capsolver extension
+        # Headless mode - using old stable version
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--window-size=1280,800")
+        
+        # Additional stability flags
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-background-networking")
+        chrome_options.add_argument("--disable-default-apps")
+        chrome_options.add_argument("--disable-sync")
+        chrome_options.add_argument("--disable-translate")
+        chrome_options.add_argument("--metrics-recording-only")
+        chrome_options.add_argument("--mute-audio")
+        chrome_options.add_argument("--no-first-run")
+        
+        # Try different port options
+        chrome_options.add_argument("--remote-debugging-port=0")
+        
+        # Add Capsolver extension
         try:
+            api_key = "CAP-F79C6D0E7A810348A201783E25287C6003CFB45BBDCB670F96E525E7C0132148"
             chrome_options.add_argument(
-                Capsolver(capsolver_key).load()
+                Capsolver(api_key).load()
             )
             print("Added Capsolver extension")
         except Exception as e:
-            print(f"Error loading Capsolver extension: {e}")
+            print(f"Warning: Failed to load Capsolver extension: {str(e)}")
         
-        # Install chromedriver if not present
+        # Install chromedriver
         chromedriver_autoinstaller.install()
         
-        # Initialize the driver
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.set_window_size(1280, 800)
-        print("Chrome driver initialized successfully")
+        # Initialize Chrome with retry logic
+        max_retries = 3
+        retry_delay = 2
+        last_error = None
         
-        return driver
+        for attempt in range(max_retries):
+            try:
+                print(f"Chrome initialization attempt {attempt+1}/{max_retries}")
+                driver = webdriver.Chrome(options=chrome_options)
+                driver.set_page_load_timeout(60)
+                driver.set_window_size(1280, 800)
+                print("Chrome initialized successfully")
+                return driver
+            except Exception as e:
+                last_error = e
+                print(f"Chrome initialization attempt {attempt+1} failed: {str(e)}")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                
+                # Clean up any orphaned processes before retry
+                cleanup_chrome_processes()
+        
+        # If we get here, all retries failed
+        print(f"Failed to initialize Chrome after {max_retries} attempts. Last error: {str(last_error)}")
+        return None
+        
     except Exception as e:
-        error_msg = f"Error initializing driver: {str(e)}"
-        print(error_msg)
-        raise
+        print(f"Error initializing driver: {str(e)}")
+        return None
 
 
 # ------------------------------
@@ -346,176 +389,75 @@ def login(driver, email, password,
           submit_button_xpath,
           group_id=None):
     """
-    Enhanced login function with robust captcha handling and detailed logging
+    Logs into Airtasker with the provided credentials.
+    Returns True if login successful, False otherwise.
     """
     try:
-        logger.info("Starting login process...")
-        if group_id:
-            dm.add_log("Starting login process...", "info", group_id=group_id, category="automation")
+        # Find and click the login button
+        print("Clicking login button...")
+        login_btn = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.XPATH, login_button_xpath))
+        )
+        login_btn.click()
+        time.sleep(random.uniform(3, 5))
         
-        # Navigate directly to login page instead of clicking a button
-        # This is more reliable in headless mode and different environments
-        logger.info("Navigating directly to the login page")
-        if group_id:
-            dm.add_log("Navigating directly to the login page", "info", group_id=group_id, category="automation")
-        driver.get("https://www.airtasker.com/login")
+        # Take screenshot
+        save_screenshot(driver, "login_form", group_id)
         
-        # Wait for login page to fully load
-        time.sleep(random.uniform(15, 20))  # Allow more time for Capsolver to initialize
+        # Enter email with human-like typing
+        print(f"Entering email: {email}")
+        email_field = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.ID, email_input_id))
+        )
+        email_field.clear()
+        for c in email:
+            email_field.send_keys(c)
+            time.sleep(random.uniform(0.05, 0.15))
         
-        # Take screenshot of login page
-        save_screenshot(driver, "login_page", group_id)
+        time.sleep(random.uniform(0.5, 1.5))
         
-        # Check if captcha is present by looking for iframe
-        captcha_iframes = driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha') or contains(@src, 'hcaptcha')]")
-        if captcha_iframes:
-            logger.info(f"Captcha detected ({len(captcha_iframes)} iframes). Waiting for Capsolver...")
-            if group_id:
-                dm.add_log(f"Captcha detected ({len(captcha_iframes)} iframes). Waiting for Capsolver...", "info", group_id=group_id, category="automation")
-            # Wait additional time for Capsolver to handle the captcha
-            time.sleep(random.uniform(10, 15))
+        # Enter password with human-like typing
+        print("Entering password...")
+        password_field = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.ID, password_input_id))
+        )
+        password_field.clear()
+        for c in password:
+            password_field.send_keys(c)
+            time.sleep(random.uniform(0.05, 0.15))
         
-        # Type the email with detailed error handling
-        try:
-            logger.info(f"Entering email: {email[:3]}...{email[-5:]}")
-            if group_id:
-                dm.add_log(f"Entering email: {email[:3]}...{email[-5:]}", "info", group_id=group_id, category="automation")
-            email_field = WebDriverWait(driver, 20).until(
-                EC.element_to_be_clickable((By.ID, email_input_id))
-            )
-            email_field.clear()
-            for c in email:
-                email_field.send_keys(c)
-                time.sleep(random.uniform(0.04, 0.12))
-        except Exception as e:
-            logger.error(f"Failed to enter email: {str(e)}")
-            if group_id:
-                dm.add_log(f"Failed to enter email: {str(e)}", "error", group_id=group_id, category="essential")
-            save_screenshot(driver, "email_input_error", group_id)
-            raise Exception(f"Could not enter email: {str(e)}")
+        time.sleep(random.uniform(1, 2))
         
-        # Type the password with error handling
-        try:
-            logger.info("Entering password")
-            if group_id:
-                dm.add_log("Entering password", "info", group_id=group_id, category="automation")
-            password_field = WebDriverWait(driver, 20).until(
-                EC.element_to_be_clickable((By.ID, password_input_id))
-            )
-            password_field.clear()
-            for c in password:
-                password_field.send_keys(c)
-                time.sleep(random.uniform(0.04, 0.1))
-        except Exception as e:
-            logger.error(f"Failed to enter password: {str(e)}")
-            if group_id:
-                dm.add_log(f"Failed to enter password: {str(e)}", "error", group_id=group_id, category="essential")
-            save_screenshot(driver, "password_input_error", group_id)
-            raise Exception(f"Could not enter password: {str(e)}")
-        
-        # Additional wait for captcha to be resolved
-        logger.info("Waiting for captcha to be resolved by Capsolver...")
-        if group_id:
-            dm.add_log("Waiting for captcha to be resolved by Capsolver...", "info", group_id=group_id, category="automation")
-        time.sleep(random.uniform(5, 10))
-        
-        # Check if captcha is still present
-        captcha_iframes = driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha') or contains(@src, 'hcaptcha')]")
-        if captcha_iframes:
-            logger.info("Captcha still present. Waiting additional time...")
-            if group_id:
-                dm.add_log("Captcha still present. Waiting additional time...", "info", group_id=group_id, category="automation")
-            time.sleep(random.uniform(10, 15))
-            save_screenshot(driver, "captcha_waiting", group_id)
-        
-        # Screenshot before clicking submit
+        # Take screenshot before submitting
         save_screenshot(driver, "before_submit", group_id)
         
-        # Submit the login form with error handling
-        try:
-            logger.info("Clicking submit button")
-            if group_id:
-                dm.add_log("Clicking submit button", "info", group_id=group_id, category="automation")
-            
-            # Try standard click first
-            try:
-                submit_btn = WebDriverWait(driver, 20).until(
-                    EC.element_to_be_clickable((By.XPATH, submit_button_xpath))
-                )
-                submit_btn.click()
-            except Exception as e:
-                logger.warning(f"Standard click failed: {str(e)}. Trying JavaScript click...")
-                if group_id:
-                    dm.add_log(f"Standard click failed: {str(e)}. Trying JavaScript click...", "warning", group_id=group_id, category="automation")
-                
-                # Try JavaScript click as fallback
-                try:
-                    driver.execute_script("arguments[0].click();", submit_btn)
-                    logger.info("JavaScript click succeeded")
-                    if group_id:
-                        dm.add_log("JavaScript click succeeded", "info", group_id=group_id, category="automation")
-                except Exception as js_error:
-                    logger.error(f"JavaScript click also failed: {str(js_error)}")
-                    if group_id:
-                        dm.add_log(f"JavaScript click also failed: {str(js_error)}", "error", group_id=group_id, category="essential")
-                    save_screenshot(driver, "submit_click_error", group_id)
-        except Exception as outer_e:
-            logger.error(f"Error during submit button handling: {str(outer_e)}")
-            if group_id:
-                dm.add_log(f"Error during submit button handling: {str(outer_e)}", "error", group_id=group_id, category="essential")
-            save_screenshot(driver, "submit_handling_error", group_id)
+        # Submit the form
+        print("Submitting login form...")
+        submit_btn = WebDriverWait(driver, 15).until(
+            EC.element_to_be_clickable((By.XPATH, submit_button_xpath))
+        )
+        submit_btn.click()
         
-        # Wait for post-login redirect
-        logger.info("Waiting for post-login redirect...")
-        if group_id:
-            dm.add_log("Waiting for post-login redirect...", "info", group_id=group_id, category="automation")
-        time.sleep(random.uniform(10, 15))
+        # Wait for login to complete
+        time.sleep(random.uniform(7, 10))
         
-        # Take a screenshot of the result
-        save_screenshot(driver, "after_login", group_id)
+        # Take screenshot after login
+        save_screenshot(driver, "after_submit", group_id)
         
-        # Check if login was successful by examining URL and elements
+        # Check if login was successful by looking for 'discover' or 'tasks' in the URL
         current_url = driver.current_url
-        logger.info(f"Current URL after login attempt: {current_url}")
-        if group_id:
-            dm.add_log(f"Current URL after login attempt: {current_url}", "info", group_id=group_id, category="automation")
+        print(f"Current URL after login: {current_url}")
         
-        # Valid URLs after successful login
-        success_url_patterns = [
-            "airtasker.com/dashboard",
-            "airtasker.com/discover",
-            "airtasker.com/tasks",
-            "airtasker.com/browse"
-        ]
-        
-        # Check URL and look for avatar element as indication of success
-        is_success_url = any(pattern in current_url for pattern in success_url_patterns)
-        avatar_element = driver.find_elements(By.XPATH, '//button[contains(@class, "Avatar")]')
-        
-        if is_success_url and avatar_element:
-            logger.info("Login successful: URL matches expected patterns and avatar element found")
-            if group_id:
-                dm.add_log("Login successful: URL matches expected patterns and avatar element found", "success", group_id=group_id, category="essential")
-            return True
-        elif is_success_url:
-            logger.warning("URL indicates success but avatar element not found. Proceeding with caution.")
-            if group_id:
-                dm.add_log("URL indicates success but avatar element not found. Proceeding with caution.", "warning", group_id=group_id, category="essential")
+        # Return success if URL contains 'discover' or 'tasks', indicating successful login
+        if 'discover' in current_url or 'tasks' in current_url:
+            print("Login successful, redirected to correct page")
             return True
         else:
-            # Login failed
-            error_message = f"Login failed: URL '{current_url}' does not match any success patterns and/or avatar element not found"
-            logger.error(error_message)
-            if group_id:
-                dm.add_log(error_message, "error", group_id=group_id, category="essential")
-            save_screenshot(driver, "login_failed", group_id)
+            print(f"Login might have failed. Expected URL with 'discover' or 'tasks', got: {current_url}")
             return False
-    
+            
     except Exception as e:
-        logger.error(f"Login process failed: {str(e)}")
-        if group_id:
-            dm.add_log(f"Login process failed: {str(e)}", "error", group_id=group_id, category="essential")
-        save_screenshot(driver, "login_exception", group_id)
+        print(f"Login error: {str(e)}")
         return False
 
 
@@ -523,54 +465,105 @@ def login(driver, email, password,
 # Set location filter function
 # ------------------------------
 def set_location_filter(driver, suburb_name, radius_km=100, group_id=None):
+    """
+    Sets the location filter on Airtasker.
+    Returns True if successful, False otherwise.
+    """
     try:
-        dm.add_log(f"Setting location filter for {suburb_name} with radius {radius_km}km", "info", group_id=group_id)
+        # Locate the filter button
+        print("Locating filter button...")
         filter_button_xpath = '//*[@id="airtasker-app"]/nav/nav/div/div/div/div[3]/button'
+        
         try:
-            WebDriverWait(driver, 15).until(
-                EC.presence_of_element_located((By.XPATH, filter_button_xpath))
+            filter_button = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.XPATH, filter_button_xpath))
             )
-        except TimeoutException:
-            save_screenshot(driver, "filter_button_not_found", group_id)
-            dm.add_log("Filter button not found within 15s.", "error", group_id=group_id)
-            return False
-
-        driver.find_element(By.XPATH, filter_button_xpath).click()
+            filter_button.click()
+            print("Clicked filter button")
+        except Exception as e:
+            print(f"Could not find or click filter button: {str(e)}")
+            # Try an alternative xpath
+            alt_filter_xpath = '//button[contains(@class, "Filter")]'
+            try:
+                alt_filter = driver.find_element(By.XPATH, alt_filter_xpath)
+                alt_filter.click()
+                print("Clicked alternative filter button")
+            except:
+                print("Could not find any filter button, skipping location filter")
+                return False
+        
         time.sleep(random.uniform(2, 4))
-
+        
+        # Enter suburb name
+        print(f"Entering suburb name: {suburb_name}")
         suburb_input_xpath = '//*[@id="label-1"]'
-        suburb_input = driver.find_element(By.XPATH, suburb_input_xpath)
-        suburb_input.clear()
-        for c in suburb_name:
-            suburb_input.send_keys(c)
-            time.sleep(random.uniform(0.04, 0.2))
-        time.sleep(random.uniform(2, 3))
-
+        
+        try:
+            suburb_input = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.XPATH, suburb_input_xpath))
+            )
+            suburb_input.clear()
+            for c in suburb_name:
+                suburb_input.send_keys(c)
+                time.sleep(random.uniform(0.05, 0.15))
+            
+            time.sleep(random.uniform(2, 3))
+        except Exception as e:
+            print(f"Could not enter suburb name: {str(e)}")
+            return False
+        
+        # Select the first suggestion
+        print("Selecting first suggestion")
         first_item_xpath = '//*[@id="airtasker-app"]/nav/nav/div/div/div/div[3]/div/div[1]/div/div[4]/div/div/ul/li[1]'
-        driver.find_element(By.XPATH, first_item_xpath).click()
+        
+        try:
+            first_item = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.XPATH, first_item_xpath))
+            )
+            first_item.click()
+            print("Selected first location suggestion")
+        except Exception as e:
+            print(f"Could not select location suggestion: {str(e)}")
+            # Try to click the Apply button anyway
+        
         time.sleep(random.uniform(2, 3))
-
+        
+        # Set radius by adjusting the slider
         try:
             slider_thumb_xpath = '//*[@id="airtasker-app"]/nav/nav/div/div/div/div[3]/div/div[1]/div/div[7]/div/div/button'
-            slider_thumb = driver.find_element(By.XPATH, slider_thumb_xpath)
-            # Example: adjust the slider based on radius (this formula may be refined)
+            slider_thumb = WebDriverWait(driver, 10).until(
+                EC.element_to_be_clickable((By.XPATH, slider_thumb_xpath))
+            )
+            
+            # Calculate offset based on radius (adjust the formula as needed)
             offset_px = int((radius_km / 100.0) * 100)
             ActionChains(driver).click_and_hold(slider_thumb).move_by_offset(offset_px, 0).release().perform()
+            print(f"Adjusted radius slider to approximately {radius_km}km")
+            
             time.sleep(random.uniform(1, 2))
-        except NoSuchElementException:
-            dm.add_log("Slider not found. Skipping slider adjustment.", "warning", group_id=group_id)
-
-        apply_button_xpath = '//*[@id="airtasker-app"]/nav/nav/div/div/div/div[3]/div/div[2]/button[2]'
-        driver.find_element(By.XPATH, apply_button_xpath).click()
-        time.sleep(random.uniform(3, 5))
+        except Exception as e:
+            print(f"Could not adjust radius slider: {str(e)}")
+            # Continue anyway
         
-        # Take screenshot after setting filter
-        save_screenshot(driver, "location_filter_set", group_id)
-        dm.add_log(f"Location filter set successfully for {suburb_name}", "info", group_id=group_id)
+        # Click Apply button
+        print("Clicking Apply button")
+        apply_button_xpath = '//*[@id="airtasker-app"]/nav/nav/div/div/div/div[3]/div/div[2]/button[2]'
+        
+        try:
+            apply_button = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.XPATH, apply_button_xpath))
+            )
+            apply_button.click()
+            print("Applied location filter")
+        except Exception as e:
+            print(f"Could not click Apply button: {str(e)}")
+            return False
+        
+        time.sleep(random.uniform(3, 5))
         return True
+        
     except Exception as e:
-        save_screenshot(driver, "filter_error", group_id)
-        dm.add_log(f"Error setting location filter: {str(e)}", "error", group_id=group_id)
+        print(f"Error setting location filter: {str(e)}")
         return False
 
 
@@ -578,53 +571,101 @@ def set_location_filter(driver, suburb_name, radius_km=100, group_id=None):
 # Scrape tasks with infinite scroll
 # ------------------------------
 def scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=3, group_id=None):
+    """
+    Scrape task listings from the current page with infinite scroll support.
+    Returns a list of task dictionaries.
+    """
     results = []
     seen_ids = set()
     
-    dm.add_log(f"Starting to scrape tasks with max_scroll={max_scroll}", "info", group_id=group_id)
-    
-    for scroll_count in range(max_scroll):
-        dm.add_log(f"Scroll iteration {scroll_count+1}/{max_scroll}", "info", group_id=group_id)
-        containers = driver.find_elements(By.XPATH, task_container_xpath)
-        dm.add_log(f"Found {len(containers)} task containers", "info", group_id=group_id)
+    try:
+        print(f"Starting to scrape tasks (max_scroll={max_scroll})")
+        save_screenshot(driver, "before_scraping", group_id)
         
-        for c in containers:
-            data_task_id = c.get_attribute("data-task-id")
-            if data_task_id and data_task_id not in seen_ids:
-                seen_ids.add(data_task_id)
-                try:
-                    title_txt = c.find_element(By.XPATH, title_xpath).text.strip()
-                except NoSuchElementException:
-                    title_txt = "Unknown Title"
-                try:
-                    link_url = c.find_element(By.XPATH, link_xpath).get_attribute("href")
-                except NoSuchElementException:
-                    link_url = None
-                
-                task_data = {
-                    "id": data_task_id,
-                    "title": title_txt,
-                    "link": link_url,
-                }
-                results.append(task_data)
-                dm.add_log(f"Added task: {title_txt}", "info", group_id=group_id)
-                
-        # Scroll down for more results
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        # Initial page load wait
         time.sleep(random.uniform(3, 5))
         
-        # Take screenshot of tasks
-        if scroll_count == 0:
-            save_screenshot(driver, "tasks_view", group_id)
+        # Scroll and collect tasks
+        for scroll_num in range(max_scroll):
+            print(f"Scroll iteration {scroll_num + 1}/{max_scroll}")
             
-        # Check if we've reached the end
-        new_containers = driver.find_elements(By.XPATH, task_container_xpath)
-        if len(new_containers) == len(containers):
-            dm.add_log("No more new tasks loaded. Stopping scroll.", "info", group_id=group_id)
-            break
-    
-    dm.add_log(f"Scraped a total of {len(results)} tasks", "info", group_id=group_id)
-    return results
+            # Try to find task containers
+            try:
+                print("Looking for task containers...")
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.XPATH, task_container_xpath))
+                )
+            except TimeoutException as e:
+                print(f"No task containers found: {str(e)}")
+                break
+                
+            # Get all current containers
+            containers = driver.find_elements(By.XPATH, task_container_xpath)
+            print(f"Found {len(containers)} containers on scroll {scroll_num + 1}")
+            
+            # Process each container
+            new_count = 0
+            for container in containers:
+                try:
+                    # Extract the task ID
+                    data_task_id = container.get_attribute("data-task-id")
+                    
+                    # Skip if we've already processed this task or if ID is missing
+                    if not data_task_id or data_task_id in seen_ids:
+                        continue
+                        
+                    # Mark as seen
+                    seen_ids.add(data_task_id)
+                    new_count += 1
+                    
+                    # Extract title
+                    try:
+                        title_element = container.find_element(By.XPATH, title_xpath)
+                        title_txt = title_element.text.strip()
+                    except Exception:
+                        title_txt = "Unknown Title"
+                        
+                    # Extract link
+                    try:
+                        link_element = container.find_element(By.XPATH, link_xpath)
+                        link_url = link_element.get_attribute("href")
+                    except Exception:
+                        link_url = container.get_attribute("href")
+                    
+                    # Add to results
+                    results.append({
+                        "id": data_task_id,
+                        "title": title_txt,
+                        "link": link_url,
+                    })
+                except Exception as e:
+                    print(f"Error processing container: {str(e)}")
+                    continue
+                    
+            print(f"Added {new_count} new tasks on scroll {scroll_num + 1}")
+            
+            # Stop if we already have enough tasks
+            if len(results) >= 20:
+                print(f"Already found {len(results)} tasks, stopping scrolling")
+                break
+                
+            # Scroll down
+            print("Scrolling down for more tasks...")
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(random.uniform(3, 5))
+            
+            # Check if we've reached the end of the scroll
+            new_containers = driver.find_elements(By.XPATH, task_container_xpath)
+            if len(new_containers) <= len(containers):
+                print("No new tasks loaded after scrolling. Stopping.")
+                break
+        
+        print(f"Scraping complete. Found {len(results)} tasks total.")
+        return results
+        
+    except Exception as e:
+        print(f"Error scraping tasks: {str(e)}")
+        return results  # Return whatever we managed to collect
 
 
 # ------------------------------
@@ -633,80 +674,142 @@ def scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scro
 def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_content=None, group_id=None, headless=False):
     """Run the Airtasker bot with the given parameters"""
     driver = None
+    status = "error"
+    message = "Initialization failed"
 
     try:
+        # Setup environment
+        print(f"Starting Airtasker bot for {email} targeting {city_name}")
+        
+        # Set up directories for logs and screenshots in /tmp for cloud environments
         is_gcp = os.getenv('GAE_ENV', '').startswith('standard')
         is_cloud = bool(os.getenv('CLOUD_ENV', False))
         is_docker = os.path.exists('/.dockerenv')
-
-        base_dir = '/tmp' if is_gcp or is_cloud or is_docker else os.getenv('DATA_DIR', os.path.join(os.getcwd(), 'data'))
-
+        
+        if is_gcp or is_cloud or is_docker:
+            base_dir = '/tmp'
+        else:
+            base_dir = os.getenv('DATA_DIR', os.path.join(os.getcwd(), 'data'))
+            
         logs_dir = os.path.join(base_dir, 'logs')
         screenshot_dir = os.path.join(base_dir, 'screenshots')
-
-        os.makedirs(logs_dir, exist_ok=True)
-        os.makedirs(screenshot_dir, exist_ok=True)
-
+        
+        # Create directories with proper error handling
+        for directory in [logs_dir, screenshot_dir]:
+            try:
+                os.makedirs(directory, exist_ok=True)
+                print(f"Using directory: {directory}")
+            except Exception as e:
+                print(f"Warning: Could not create directory {directory}: {str(e)}")
+                # Use fallback directory if needed
+                if 'logs' in directory:
+                    logs_dir = '/tmp'
+                elif 'screenshots' in directory:
+                    screenshot_dir = '/tmp'
+        
+        # Set environment variables for other functions
         os.environ['LOG_DIR'] = logs_dir
         os.environ['SCREENSHOT_DIR'] = screenshot_dir
-
-        print(f"Starting Airtasker bot for {email} targeting {city_name}")
-        print(f"Using directories: LOGS={logs_dir}, SCREENSHOTS={screenshot_dir}")
-
+        
+        # Initialize Chrome with the new robust approach
+        print("Initializing Chrome driver...")
         driver = init_driver(group_id)
+        
         if not driver:
-            raise Exception("Driver initialization failed")
-
+            return {"status": "error", "message": "Failed to initialize Chrome driver after multiple attempts"}
+        
+        # Navigate to Airtasker
+        print("Navigating to Airtasker...")
         driver.get("https://www.airtasker.com/")
         time.sleep(random.uniform(5, 8))
-
+        
+        # Take a screenshot to verify page loaded correctly
         save_screenshot(driver, "initial_page", group_id)
-
+        
+        # Login credentials
         login_button_xpath = '//*[@id="airtasker-app"]/nav/div[2]/div/div/div/div[2]/a[2]'
         email_input_id = "username"
         password_input_id = "password"
         submit_button_xpath = "/html/body/main/section/div/div/div/form/div[2]/button"
-
-        if not login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath):
-            raise Exception("Login failed")
-
+        
+        # Attempt login
+        print(f"Attempting to login as {email}...")
+        login_success = login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath)
+        if not login_success:
+            return {"status": "error", "message": "Login failed"}
+        
+        print("Login successful")
+        save_screenshot(driver, "after_login", group_id)
+        
+        # Navigate to tasks page
+        print("Navigating to tasks page...")
         tasks_page_url = "https://www.airtasker.com/tasks"
         driver.get(tasks_page_url)
         time.sleep(random.uniform(5, 8))
-
-        if not set_location_filter(driver, city_name, 100):
-            raise Exception("Failed to set location filter")
-
+        
+        # Set location filter
+        print(f"Setting location filter to {city_name}...")
+        filter_success = set_location_filter(driver, city_name, 100)
+        if not filter_success:
+            print("Warning: Failed to set location filter, continuing anyway...")
+        
+        save_screenshot(driver, "location_filter", group_id)
+        
+        # Scrape tasks
+        print("Scraping tasks...")
         task_container_xpath = '//a[@data-ui-test="task-list-item" and @data-task-id]'
         title_xpath = './/p[contains(@class,"TaskCard__StyledTitle")]'
         link_xpath = '.'
-
+        
         tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5)
+        
         if not tasks:
-            raise Exception("No tasks found to comment on")
-
+            return {"status": "warning", "message": "No tasks found to comment on"}
+        
+        print(f"Found {len(tasks)} tasks")
+        
+        # Post comments
         from app.automations.comments import comment_on_some_tasks
-        comment_on_some_tasks(
+        print(f"Posting comments on up to {max_posts} tasks using message: {message_content}")
+        
+        comment_result = comment_on_some_tasks(
             driver=driver,
             tasks=tasks,
             message_content=message_content,
             max_to_post=max_posts,
             image_path=None
         )
-
-        save_screenshot(driver, "completed", group_id)
-        print("Commenting completed successfully")
-        return {"status": "success", "message": "Commenting completed successfully"}
-
+        
+        save_screenshot(driver, "after_comments", group_id)
+        print("Automation completed successfully")
+        
+        status = "success"
+        message = "Automation completed successfully"
+        return {"status": status, "message": message}
+        
     except Exception as e:
         error_msg = f"Error in run_airtasker_bot: {str(e)}"
         print(error_msg)
-        return {"status": "error", "message": error_msg}
-    finally:
+        
+        # Try to take error screenshot if driver is active
         if driver:
-            driver.quit()
-            print("Browser closed successfully")
-
+            try:
+                save_screenshot(driver, "error_screenshot", group_id)
+            except:
+                pass
+            
+        return {"status": "error", "message": error_msg}
+        
+    finally:
+        # Ensure driver is properly closed
+        if driver:
+            try:
+                driver.quit()
+                print("Chrome browser closed successfully")
+            except Exception as e:
+                print(f"Error closing browser: {str(e)}")
+        
+        # Always clean up Chrome processes
         cleanup_chrome_processes()
 
 
