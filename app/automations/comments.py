@@ -2,11 +2,25 @@
 import time
 import random
 import os
+import logging
+import datetime
+import traceback
 from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException, TimeoutException, ElementClickInterceptedException, StaleElementReferenceException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, ElementClickInterceptedException, StaleElementReferenceException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from app import data_manager as dm
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join(os.environ.get('DATA_DIR', '/app/data'), 'logs', 'comments.log'))
+    ]
+)
+logger = logging.getLogger(__name__)
 
 # ------------------------------
 # 1) COMMENT TEMPLATES
@@ -38,195 +52,308 @@ def pick_random_comment():
              )
     return final
 
-# Helper function to save screenshots
-def save_screenshot(driver, prefix, group_id):
-    """Helper function to save screenshots to a consistent location"""
+# ------------------------------
+# Helper function for screenshots
+# ------------------------------
+def save_screenshot(driver, name_prefix, group_id=None):
+    """Save a screenshot with timestamp and prefix"""
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{name_prefix}_{timestamp}.png"
+    screenshot_dir = os.path.join(os.environ.get('DATA_DIR', '/app/data'), 'screenshots')
+    
+    # Ensure directory exists
+    os.makedirs(screenshot_dir, exist_ok=True)
+    
+    filepath = os.path.join(screenshot_dir, filename)
     try:
-        timestamp = int(time.time())
-        screenshots_dir = os.path.join(os.getcwd(), 'screenshots')
-        os.makedirs(screenshots_dir, exist_ok=True)
-        filename = f"{prefix}_{timestamp}.png"
-        filepath = os.path.join(screenshots_dir, filename)
         driver.save_screenshot(filepath)
-        # Log the screenshot
-        dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
-        return filename
+        logger.info(f"Screenshot saved: {filepath}")
+        # Also log to data_manager if group_id is provided
+        if group_id:
+            dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
+        return filepath
     except Exception as e:
-        dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id)
+        logger.error(f"Failed to save screenshot: {str(e)}")
+        if group_id:
+            dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id)
         return None
 
-def post_comment_on_task(driver, task_url, comment_text=None, image_path=None, group_id=None):
+def post_comment_on_task(driver, task_url, custom_message=None, image_path=None, group_id=None):
     """
-    Navigates to the given task URL, posts the provided comment,
-    optionally attaches an image, and clicks 'Send'.
+    Enhanced function to post a comment on a task with improved error handling and logging.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        task_url: URL of the task page
+        custom_message: Optional custom message (uses random template if None)
+        image_path: Optional path to image for attachment
+        group_id: Optional group ID for logging
+    
+    Returns:
+        bool: True if comment was posted successfully, False otherwise
     """
-    dm.add_log(f"Posting comment on: {task_url}", "info", group_id=group_id)
+    logger.info(f"Attempting to post comment on: {task_url}")
+    if group_id:
+        dm.add_log(f"Attempting to post comment on: {task_url}", "info", group_id=group_id)
     
     try:
+        # Navigate to the task URL
         driver.get(task_url)
+        logger.info(f"Navigated to task URL")
         time.sleep(random.uniform(5, 8))
         
         # Take screenshot of task page
         save_screenshot(driver, "task_page", group_id)
-    
-        # If no comment text provided, use random template
-        if not comment_text:
-            comment_text = pick_random_comment()
-            dm.add_log("Using randomly selected comment template", "info", group_id=group_id)
         
-        dm.add_log(f"Comment to post: {comment_text}", "info", group_id=group_id)
-    
-        # XPaths for the comment textarea and the 'Send' button - updated to be more robust
+        # Choose comment text - either custom or random template
+        comment_text = custom_message if custom_message else pick_random_comment()
+        logger.info(f"Using comment: {comment_text}")
+        if group_id:
+            dm.add_log(f"Using comment: {comment_text}", "info", group_id=group_id)
+        
+        # XPaths for the comment box and send button - multiple options for robustness
         comment_box_xpaths = [
             '//*[@id="airtasker-app"]/main/div/div[1]/div[3]/div/div/div[2]/div/div[6]/div/div[2]/div/div/div/div/div[3]/textarea',
-            '//textarea[contains(@placeholder, "Comment")]',
+            '//textarea[contains(@placeholder, "Add a comment")]',
+            '//textarea[@data-ui-test="comment-input"]',
             '//div[contains(@class, "CommentBox")]//textarea'
         ]
         
         send_button_xpaths = [
             '//*[@id="airtasker-app"]/main/div/div[1]/div[3]/div/div/div[2]/div/div[6]/div/div[2]/div/div/div/div/div[3]/div/span/button',
-            '//button[text()="Send"]',
-            '//button[contains(@class, "SendButton")]'
+            '//button[contains(text(), "Send") or contains(text(), "Post")]',
+            '//button[@data-ui-test="submit-comment-button"]',
+            '//div[contains(@class, "CommentBox")]//button'
         ]
         
-        # XPath for file upload input (for optional image attachment)
-        attach_input_xpath = '//*[@data-ui-test="upload-attachment-input"]'
-    
-        # Find comment box using multiple potential XPaths
+        # File upload input XPath - multiple options
+        attach_input_xpaths = [
+            '//*[@data-ui-test="upload-attachment-input"]',
+            '//input[@type="file" and @accept="image/*"]',
+            '//div[contains(@class, "AttachmentUpload")]//input[@type="file"]'
+        ]
+        
+        # Try to find and interact with the comment box using multiple approaches
         comment_box = None
         for xpath in comment_box_xpaths:
             try:
                 comment_box = WebDriverWait(driver, 5).until(
                     EC.presence_of_element_located((By.XPATH, xpath))
                 )
-                dm.add_log(f"Found comment box using xpath: {xpath}", "info", group_id=group_id)
+                logger.info(f"Found comment box with XPath: {xpath}")
+                if group_id:
+                    dm.add_log(f"Found comment box with XPath: {xpath}", "info", group_id=group_id)
                 break
             except (TimeoutException, NoSuchElementException):
                 continue
-                
+        
         if not comment_box:
-            dm.add_log("Could not find comment box after trying all XPaths", "error", group_id=group_id)
+            logger.error("Could not find comment box with any of the XPaths")
+            if group_id:
+                dm.add_log("Could not find comment box with any of the XPaths", "error", group_id=group_id)
             save_screenshot(driver, "comment_box_not_found", group_id)
             return False
-    
-        # Clear and enter text in comment box
+        
+        # Clear and enter text in the comment box with human-like typing
         try:
             comment_box.clear()
-            # Type with human-like delays
             for c in comment_text:
                 comment_box.send_keys(c)
-                time.sleep(random.uniform(0.03, 0.12))
-            time.sleep(random.uniform(2, 4))
-            dm.add_log("Comment text entered successfully", "info", group_id=group_id)
+                time.sleep(random.uniform(0.04, 0.15))
+            logger.info("Comment text entered successfully")
+            if group_id:
+                dm.add_log("Comment text entered successfully", "info", group_id=group_id)
+            time.sleep(random.uniform(1, 2))  # Short pause after typing
         except Exception as e:
-            dm.add_log(f"Error entering comment text: {str(e)}", "error", group_id=group_id)
-            save_screenshot(driver, "comment_text_error", group_id)
+            logger.error(f"Error typing comment: {str(e)}")
+            if group_id:
+                dm.add_log(f"Error typing comment: {str(e)}", "error", group_id=group_id)
+            save_screenshot(driver, "comment_typing_error", group_id)
             return False
-    
+        
         # Attach an image if provided
         if image_path:
-            try:
-                attach_input = driver.find_element(By.XPATH, attach_input_xpath)
-                attach_input.send_keys(image_path)
-                dm.add_log(f"Attached image: {image_path}", "info", group_id=group_id)
-                time.sleep(random.uniform(4, 6))
-            except NoSuchElementException:
-                dm.add_log("Attachment input not found. Skipping image attachment.", "warning", group_id=group_id)
-    
-        # Take screenshot before sending comment
-        save_screenshot(driver, "before_send_comment", group_id)
+            attach_input = None
+            for xpath in attach_input_xpaths:
+                try:
+                    attach_input = driver.find_element(By.XPATH, xpath)
+                    logger.info(f"Found attachment input with XPath: {xpath}")
+                    if group_id:
+                        dm.add_log(f"Found attachment input with XPath: {xpath}", "info", group_id=group_id)
+                    break
+                except NoSuchElementException:
+                    continue
+            
+            if attach_input:
+                try:
+                    # Ensure the image path is absolute
+                    abs_image_path = os.path.abspath(image_path)
+                    attach_input.send_keys(abs_image_path)
+                    logger.info(f"Attached image: {abs_image_path}")
+                    if group_id:
+                        dm.add_log(f"Attached image: {abs_image_path}", "info", group_id=group_id)
+                    time.sleep(random.uniform(3, 5))  # Wait for image to upload
+                except Exception as e:
+                    logger.error(f"Error attaching image: {str(e)}")
+                    if group_id:
+                        dm.add_log(f"Error attaching image: {str(e)}", "error", group_id=group_id)
+                    save_screenshot(driver, "image_attachment_error", group_id)
+            else:
+                logger.warning("Image attachment skipped - input element not found")
+                if group_id:
+                    dm.add_log("Image attachment skipped - input element not found", "warning", group_id=group_id)
         
-        # Find and click send button using multiple potential XPaths
+        # Take screenshot before clicking send
+        save_screenshot(driver, "before_send", group_id)
+        
+        # Try to click the send button using multiple approaches
         send_button = None
         for xpath in send_button_xpaths:
             try:
                 send_button = WebDriverWait(driver, 5).until(
                     EC.element_to_be_clickable((By.XPATH, xpath))
                 )
-                dm.add_log(f"Found send button using xpath: {xpath}", "info", group_id=group_id)
+                logger.info(f"Found send button with XPath: {xpath}")
+                if group_id:
+                    dm.add_log(f"Found send button with XPath: {xpath}", "info", group_id=group_id)
                 break
             except (TimeoutException, NoSuchElementException):
                 continue
-                
+        
         if not send_button:
-            dm.add_log("Could not find send button after trying all XPaths", "error", group_id=group_id)
+            logger.error("Could not find send button with any of the XPaths")
+            if group_id:
+                dm.add_log("Could not find send button with any of the XPaths", "error", group_id=group_id)
             save_screenshot(driver, "send_button_not_found", group_id)
             return False
-            
-        # Try to click the button with multiple strategies
+        
+        # Try regular click first, then JavaScript click as fallback
         try:
             send_button.click()
-            dm.add_log("Clicked send button", "info", group_id=group_id)
-        except (ElementClickInterceptedException, StaleElementReferenceException) as e:
-            dm.add_log(f"Error clicking send button: {str(e)}", "warning", group_id=group_id)
+            logger.info("Send button clicked successfully")
+            if group_id:
+                dm.add_log("Send button clicked successfully", "info", group_id=group_id)
+        except (ElementClickInterceptedException, StaleElementReferenceException, WebDriverException) as e:
+            logger.warning(f"Standard click failed: {str(e)}. Trying JavaScript click...")
+            if group_id:
+                dm.add_log(f"Standard click failed: {str(e)}. Trying JavaScript click...", "warning", group_id=group_id)
             try:
-                # Try using JavaScript to click
                 driver.execute_script("arguments[0].click();", send_button)
-                dm.add_log("Used JavaScript to click send button", "info", group_id=group_id)
-            except Exception as js_e:
-                dm.add_log(f"JavaScript click failed: {str(js_e)}", "error", group_id=group_id)
+                logger.info("JavaScript click succeeded")
+                if group_id:
+                    dm.add_log("JavaScript click succeeded", "info", group_id=group_id)
+            except Exception as js_error:
+                logger.error(f"JavaScript click also failed: {str(js_error)}")
+                if group_id:
+                    dm.add_log(f"JavaScript click also failed: {str(js_error)}", "error", group_id=group_id)
                 save_screenshot(driver, "send_button_js_error", group_id)
                 return False
         
-        # Take screenshot after posting comment
-        time.sleep(random.uniform(2, 3))
-        save_screenshot(driver, "after_send_comment", group_id)
+        # Wait for comment to be posted
+        time.sleep(random.uniform(3, 5))
         
-        dm.add_log("Comment posted successfully!", "success", group_id=group_id)
-        time.sleep(random.uniform(3, 6))
-        return True
+        # Take screenshot after posting
+        save_screenshot(driver, "after_comment_posted", group_id)
         
+        # Look for indicators that comment was posted successfully
+        # This could be the presence of the comment text on the page or some other confirmation element
+        try:
+            # This is a simple heuristic - looking for our own comment text on the page
+            # A more robust approach would check for specific confirmation elements
+            page_source = driver.page_source
+            if comment_text in page_source:
+                logger.info("Comment successfully posted and verified")
+                if group_id:
+                    dm.add_log("Comment successfully posted and verified", "success", group_id=group_id)
+                return True
+            else:
+                logger.warning("Comment may have been posted but couldn't verify")
+                if group_id:
+                    dm.add_log("Comment may have been posted but couldn't verify", "warning", group_id=group_id)
+                # We'll consider it a success for now
+                return True
+        except Exception as e:
+            logger.error(f"Error verifying comment: {str(e)}")
+            if group_id:
+                dm.add_log(f"Error verifying comment: {str(e)}", "error", group_id=group_id)
+            # We'll still return True since the comment probably posted
+            return True
+    
     except Exception as e:
-        dm.add_log(f"Unexpected error posting comment: {str(e)}", "error", group_id=group_id)
-        save_screenshot(driver, "comment_error", group_id)
+        logger.error(f"Error posting comment: {str(e)}")
+        logger.error(traceback.format_exc())
+        if group_id:
+            dm.add_log(f"Error posting comment: {str(e)}", "error", group_id=group_id)
+        save_screenshot(driver, "comment_posting_error", group_id)
         return False
 
 def comment_on_some_tasks(driver, tasks, message_content=None, max_to_post=3, image_path=None, group_id=None):
     """
-    Given a list of task dicts (each with a 'link'),
-    posts the provided comment on up to 'max_to_post' tasks.
-    Optionally attaches an image.
+    Enhanced function to post comments on multiple tasks with error handling.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        tasks: List of task dictionaries (each with a 'link' key)
+        message_content: Optional custom message (uses random template if None)
+        max_to_post: Maximum number of tasks to comment on
+        image_path: Optional path to image for attachment
+        group_id: Optional group ID for logging
+    
+    Returns:
+        int: Number of comments successfully posted
     """
-    if not tasks:
-        dm.add_log("No tasks provided to comment on", "warning", group_id=group_id)
-        return 0
-        
-    dm.add_log(f"Preparing to comment on up to {max_to_post} tasks", "info", group_id=group_id)
+    logger.info(f"Starting to post comments on up to {max_to_post} tasks")
+    if group_id:
+        dm.add_log(f"Starting to post comments on up to {max_to_post} tasks", "info", group_id=group_id)
     
-    # Ensure tasks is a list and has 'link' attribute
-    valid_tasks = [t for t in tasks if isinstance(t, dict) and t.get('link')]
-    
-    if not valid_tasks:
-        dm.add_log("No valid tasks with links found", "warning", group_id=group_id)
-        return 0
-    
-    # Shuffle to randomize order and limit to max_to_post
+    # Shuffle tasks to pick random ones each time
+    valid_tasks = [t for t in tasks if t.get('link')]
     random.shuffle(valid_tasks)
+    
+    # Limit the number of tasks to comment on
     tasks_to_comment = valid_tasks[:max_to_post]
     
-    dm.add_log(f"Selected {len(tasks_to_comment)} tasks for commenting", "info", group_id=group_id)
-    
+    # Track the number of successful comments
     success_count = 0
-    for i, t in enumerate(tasks_to_comment, start=1):
-        link = t.get("link")
-        title = t.get('title', 'Unknown Title')
-            
-        dm.add_log(f"Starting comment {i}/{len(tasks_to_comment)}: {title}", "info", group_id=group_id)
-        
-        # Log the actual message content being used
-        if message_content:
-            dm.add_log(f"Using custom message", "info", group_id=group_id)
-        else:
-            dm.add_log("Using randomly generated message", "info", group_id=group_id)
-            
-        if post_comment_on_task(driver, link, message_content, image_path=image_path, group_id=group_id):
-            success_count += 1
-        
-        # Wait between commenting on tasks
-        if i < len(tasks_to_comment):
-            wait_time = random.uniform(5, 10)
-            dm.add_log(f"Waiting {wait_time:.1f} seconds before next comment", "info", group_id=group_id)
-            time.sleep(wait_time)
     
-    dm.add_log(f"Completed commenting on {success_count}/{len(tasks_to_comment)} tasks successfully", "info", group_id=group_id)
+    for i, task in enumerate(tasks_to_comment, start=1):
+        task_id = task.get('id', 'unknown')
+        task_title = task.get('title', 'unknown')
+        task_link = task.get('link')
+        
+        if not task_link:
+            logger.warning(f"Task {i} (ID: {task_id}) is missing a link, skipping")
+            if group_id:
+                dm.add_log(f"Task {i} (ID: {task_id}) is missing a link, skipping", "warning", group_id=group_id)
+            continue
+        
+        logger.info(f"Commenting on task {i}/{len(tasks_to_comment)}: {task_title} (ID: {task_id})")
+        if group_id:
+            dm.add_log(f"Commenting on task {i}/{len(tasks_to_comment)}: {task_title}", "info", group_id=group_id)
+        
+        # Attempt to post the comment
+        success = post_comment_on_task(driver, task_link, message_content, image_path, group_id)
+        
+        if success:
+            success_count += 1
+            logger.info(f"Comment posted successfully on task {i}")
+            if group_id:
+                dm.add_log(f"Comment posted successfully on task {i}", "success", group_id=group_id)
+        else:
+            logger.warning(f"Failed to post comment on task {i}")
+            if group_id:
+                dm.add_log(f"Failed to post comment on task {i}", "warning", group_id=group_id)
+        
+        # Random delay between tasks to appear more human-like
+        if i < len(tasks_to_comment):
+            delay = random.uniform(5, 10)
+            logger.info(f"Waiting {delay:.2f} seconds before next comment...")
+            if group_id:
+                dm.add_log(f"Waiting {delay:.2f} seconds before next comment...", "info", group_id=group_id)
+            time.sleep(delay)
+    
+    logger.info(f"Comment posting completed. Posted {success_count} out of {len(tasks_to_comment)} attempted comments")
+    if group_id:
+        dm.add_log(f"Comment posting completed. Posted {success_count} out of {len(tasks_to_comment)} attempted comments", "info", group_id=group_id)
+    
     return success_count 

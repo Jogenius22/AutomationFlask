@@ -1,13 +1,15 @@
 import time
 import random
 import os
+import logging
+import traceback
 import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, ElementClickInterceptedException, StaleElementReferenceException, WebDriverException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import chromedriver_autoinstaller
@@ -17,6 +19,17 @@ from chrome_extension_python import Extension
 from app.automations.comments import comment_on_some_tasks
 from app import data_manager as dm
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join(os.environ.get('DATA_DIR', '/app/data'), 'logs', 'automation.log'))
+    ]
+)
+logger = logging.getLogger(__name__)
+
 # ------------------------------
 # Basic user agents for stealth
 # ------------------------------
@@ -25,6 +38,33 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.1 Safari/605.1.15",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36"
 ]
+
+
+# ------------------------------
+# Helper functions
+# ------------------------------
+def save_screenshot(driver, name_prefix, group_id=None):
+    """Save a screenshot with timestamp and prefix"""
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{name_prefix}_{timestamp}.png"
+    screenshot_dir = os.path.join(os.environ.get('DATA_DIR', '/app/data'), 'screenshots')
+    
+    # Ensure directory exists
+    os.makedirs(screenshot_dir, exist_ok=True)
+    
+    filepath = os.path.join(screenshot_dir, filename)
+    try:
+        driver.save_screenshot(filepath)
+        logger.info(f"Screenshot saved: {filepath}")
+        # Also log to data_manager if group_id is provided
+        if group_id:
+            dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
+        return filepath
+    except Exception as e:
+        logger.error(f"Failed to save screenshot: {str(e)}")
+        if group_id:
+            dm.add_log(f"Failed to save screenshot: {str(e)}", "error", group_id=group_id)
+        return None
 
 
 # ------------------------------
@@ -57,54 +97,68 @@ class Capsolver(Extension):
 
 
 # ------------------------------
-# Helper function for screenshots
-# ------------------------------
-def save_screenshot(driver, prefix, group_id):
-    timestamp = int(time.time())
-    screenshots_dir = os.path.join(os.getcwd(), 'screenshots')
-    os.makedirs(screenshots_dir, exist_ok=True)
-    filename = f"{prefix}_{timestamp}.png"
-    filepath = os.path.join(screenshots_dir, filename)
-    driver.save_screenshot(filepath)
-    # Log the screenshot
-    dm.add_log(f"Screenshot saved: {filename}", "info", group_id=group_id)
-    return filename
-
-
-# ------------------------------
 # Initialize the Selenium driver
 # ------------------------------
-def init_driver(headless=False):
-    user_agent = random.choice(USER_AGENTS)
-    chrome_options = Options()
-    chrome_options.add_argument(f"--user-agent={user_agent}")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("--disable-infobars")
+def init_driver():
+    logger.info("Initializing Chrome driver...")
     
-    # Add headless mode only if specified
-    if headless:
-        chrome_options.add_argument("--headless=new")
-        chrome_options.add_argument("--window-size=1920,1080")
-        chrome_options.add_argument("--start-maximized")
+    try:
+        user_agent = random.choice(USER_AGENTS)
+        chrome_options = Options()
+        
+        # Core browser settings
+        chrome_options.add_argument(f"--user-agent={user_agent}")
+        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument("--disable-infobars")
+        
+        # Critical flags for headless mode stability
         chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--remote-debugging-port=9222")
         
-    # Load the captcha solver extension (this extension will handle reCAPTCHA automatically)
-    chrome_options.add_argument(
-        Capsolver("CAP-F79C6D0E7A810348A201783E25287C6003CFB45BBDCB670F96E525E7C0132148").load()
-    )
+        # Performance improvements
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+        chrome_options.add_argument("--disable-background-timer-throttling")
+        
+        # Window size in headless mode
+        chrome_options.add_argument("--window-size=1920,1080")
+        
+        # Check if we should run in headless mode
+        if os.environ.get('SELENIUM_HEADLESS', 'false').lower() in ('true', '1', 't'):
+            logger.info("Running Chrome in headless mode")
+            # Using the newer headless flag for Chrome
+            chrome_options.add_argument("--headless=new")
+        
+        # Load the captcha solver extension
+        capsolver_api_key = "CAP-F79C6D0E7A810348A201783E25287C6003CFB45BBDCB670F96E525E7C0132148"
+        logger.info("Loading Capsolver extension")
+        chrome_options.add_argument(
+            Capsolver(capsolver_api_key).load()
+        )
 
-    # Install chromedriver if not present
-    chromedriver_autoinstaller.install()
-    driver = webdriver.Chrome(options=chrome_options)
-    
-    # Set window size if not headless
-    if not headless:
-        driver.set_window_size(1280, 800)
+        # Set user data directory in /tmp for container compatibility
+        chrome_options.add_argument("--user-data-dir=/tmp/chrome")
         
-    # Additional stealth settings that work in both headless and regular mode
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-    
-    return driver
+        # Install chromedriver if not present
+        chromedriver_path = chromedriver_autoinstaller.install()
+        logger.info(f"ChromeDriver installed at: {chromedriver_path}")
+        
+        # Create Service object with path
+        service = Service(chromedriver_path)
+        
+        # Initialize driver with service and options
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver.set_window_size(1920, 1080)
+        
+        logger.info("Chrome driver initialized successfully")
+        return driver
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize Chrome driver: {str(e)}")
+        logger.error(traceback.format_exc())
+        raise
 
 
 # ------------------------------
@@ -116,34 +170,42 @@ def login(driver, email, password,
           password_input_id,
           submit_button_xpath,
           group_id=None):
+    """
+    Enhanced login function with robust captcha handling and detailed logging
+    """
     try:
-        # Navigate directly to login page instead of clicking login button
-        dm.add_log(f"Navigating directly to login page for {email}", "info", group_id=group_id)
-        driver.get("https://www.airtasker.com/login")
+        logger.info("Starting login process...")
+        if group_id:
+            dm.add_log("Starting login process...", "info", group_id=group_id)
         
-        # Wait for login page to load properly
-        time.sleep(random.uniform(7, 10))
+        # Navigate directly to login page instead of clicking a button
+        # This is more reliable in headless mode and different environments
+        logger.info("Navigating directly to the login page")
+        if group_id:
+            dm.add_log("Navigating directly to the login page", "info", group_id=group_id)
+        driver.get("https://auth.airtasker.com/user_sessions/new")
+        
+        # Wait for login page to fully load
+        time.sleep(random.uniform(15, 20))  # Allow more time for Capsolver to initialize
         
         # Take screenshot of login page
         save_screenshot(driver, "login_page", group_id)
         
-        # IMPORTANT: Wait for the page to fully load and Capsolver to initialize
-        dm.add_log("Giving Capsolver time to initialize before entering credentials", "info", group_id=group_id)
-        time.sleep(random.uniform(15, 20))
+        # Check if captcha is present by looking for iframe
+        captcha_iframes = driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha') or contains(@src, 'hcaptcha')]")
+        if captcha_iframes:
+            logger.info(f"Captcha detected ({len(captcha_iframes)} iframes). Waiting for Capsolver...")
+            if group_id:
+                dm.add_log(f"Captcha detected ({len(captcha_iframes)} iframes). Waiting for Capsolver...", "info", group_id=group_id)
+            # Wait additional time for Capsolver to handle the captcha
+            time.sleep(random.uniform(10, 15))
         
-        # Check for any captcha iframes that might be present
+        # Type the email with detailed error handling
         try:
-            recaptcha_frames = driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha')]")
-            if recaptcha_frames:
-                dm.add_log(f"Captcha detected before login. Giving extra time for Capsolver to process.", "info", group_id=group_id)
-                time.sleep(random.uniform(10, 15))
-        except Exception as e:
-            dm.add_log(f"Error checking for captcha: {str(e)}", "warning", group_id=group_id)
-        
-        # Type the email
-        dm.add_log(f"Typing email: {email}", "info", group_id=group_id)
-        try:
-            email_field = WebDriverWait(driver, 10).until(
+            logger.info(f"Entering email: {email[:3]}...{email[-5:]}")
+            if group_id:
+                dm.add_log(f"Entering email: {email[:3]}...{email[-5:]}", "info", group_id=group_id)
+            email_field = WebDriverWait(driver, 15).until(
                 EC.element_to_be_clickable((By.ID, email_input_id))
             )
             email_field.clear()
@@ -151,91 +213,123 @@ def login(driver, email, password,
                 email_field.send_keys(c)
                 time.sleep(random.uniform(0.04, 0.2))
         except Exception as e:
-            dm.add_log(f"Error entering email: {str(e)}", "error", group_id=group_id)
-            save_screenshot(driver, "email_entry_error", group_id)
+            logger.error(f"Failed to enter email: {str(e)}")
+            if group_id:
+                dm.add_log(f"Failed to enter email: {str(e)}", "error", group_id=group_id)
+            save_screenshot(driver, "email_input_error", group_id)
             raise
-
-        # Type the password
-        dm.add_log("Typing password", "info", group_id=group_id)
+        
+        # Type the password with detailed error handling
         try:
-            password_field = driver.find_element(By.ID, password_input_id)
+            logger.info("Entering password")
+            if group_id:
+                dm.add_log("Entering password", "info", group_id=group_id)
+            password_field = WebDriverWait(driver, 15).until(
+                EC.element_to_be_clickable((By.ID, password_input_id))
+            )
             password_field.clear()
             for c in password:
                 password_field.send_keys(c)
                 time.sleep(random.uniform(0.04, 0.15))
         except Exception as e:
-            dm.add_log(f"Error entering password: {str(e)}", "error", group_id=group_id)
-            save_screenshot(driver, "password_entry_error", group_id)
+            logger.error(f"Failed to enter password: {str(e)}")
+            if group_id:
+                dm.add_log(f"Failed to enter password: {str(e)}", "error", group_id=group_id)
+            save_screenshot(driver, "password_input_error", group_id)
             raise
-
-        # Wait longer for captcha to be solved automatically by the extension
-        dm.add_log("Waiting for captcha to be solved by Capsolver...", "info", group_id=group_id)
+        
+        # Captcha should be solved automatically by the extension
+        # But we'll wait a bit to make sure it's processed
+        logger.info("Waiting for captcha to be resolved by Capsolver...")
+        if group_id:
+            dm.add_log("Waiting for captcha to be resolved by Capsolver...", "info", group_id=group_id)
         time.sleep(random.uniform(10, 15))
         
-        # Take screenshot before clicking submit
+        # Check again for any remaining captcha
+        captcha_iframes = driver.find_elements(By.XPATH, "//iframe[contains(@src, 'recaptcha') or contains(@src, 'hcaptcha')]")
+        if captcha_iframes:
+            logger.info("Captcha still present. Waiting additional time...")
+            if group_id:
+                dm.add_log("Captcha still present. Waiting additional time...", "info", group_id=group_id)
+            time.sleep(random.uniform(10, 15))
+            save_screenshot(driver, "captcha_present", group_id)
+            
+        # Take screenshot before submitting form
         save_screenshot(driver, "before_submit", group_id)
         
-        # Submit the login form
-        dm.add_log("Clicking the submit button", "info", group_id=group_id)
+        # Submit the login form with fallback mechanisms
         try:
-            # First try to find if button is clickable
-            submit_btn = WebDriverWait(driver, 10).until(
+            logger.info("Clicking submit button")
+            if group_id:
+                dm.add_log("Clicking submit button", "info", group_id=group_id)
+            submit_btn = WebDriverWait(driver, 15).until(
                 EC.element_to_be_clickable((By.XPATH, submit_button_xpath))
             )
             submit_btn.click()
-            dm.add_log("Submit button clicked", "info", group_id=group_id)
         except Exception as e:
-            dm.add_log(f"Error clicking submit button: {str(e)}", "warning", group_id=group_id)
-            save_screenshot(driver, "submit_error", group_id)
-            
-            # Try JavaScript click as fallback
+            logger.warning(f"Standard click failed: {str(e)}. Trying JavaScript click...")
+            if group_id:
+                dm.add_log(f"Standard click failed: {str(e)}. Trying JavaScript click...", "warning", group_id=group_id)
             try:
-                dm.add_log("Trying JavaScript click instead", "info", group_id=group_id)
-                submit_btn = driver.find_element(By.XPATH, submit_button_xpath)
-                driver.execute_script("arguments[0].click();", submit_btn)
-                dm.add_log("JavaScript click successful", "info", group_id=group_id)
-            except Exception as js_e:
-                dm.add_log(f"JavaScript click also failed: {str(js_e)}", "error", group_id=group_id)
+                # Fallback to JavaScript click which can be more reliable in some cases
+                element = driver.find_element(By.XPATH, submit_button_xpath)
+                driver.execute_script("arguments[0].click();", element)
+                logger.info("JavaScript click succeeded")
+                if group_id:
+                    dm.add_log("JavaScript click succeeded", "info", group_id=group_id)
+            except Exception as js_error:
+                logger.error(f"JavaScript click also failed: {str(js_error)}")
+                if group_id:
+                    dm.add_log(f"JavaScript click also failed: {str(js_error)}", "error", group_id=group_id)
+                save_screenshot(driver, "submit_button_error", group_id)
                 raise
         
-        # Wait longer for post-login redirect
-        dm.add_log("Waiting for login to complete...", "info", group_id=group_id)
+        # Wait for post-login redirect
+        logger.info("Waiting for post-login redirect...")
+        if group_id:
+            dm.add_log("Waiting for post-login redirect...", "info", group_id=group_id)
         time.sleep(random.uniform(15, 20))
         
-        # Take screenshot after login
-        save_screenshot(driver, "post_login", group_id)
+        # Take screenshot after login attempt
+        save_screenshot(driver, "after_login_attempt", group_id)
         
-        # Check if login was successful by checking for URLs and also avatar element
-        avatar_xpath = '//*[@id="overlay-provider"]/nav/div[2]/div/div/div/div[2]/button/div/div'
-        login_success = False
+        # Check if the current URL is one of the expected post-login pages
+        current_url = driver.current_url
+        logger.info(f"Current URL after login attempt: {current_url}")
+        if group_id:
+            dm.add_log(f"Current URL after login attempt: {current_url}", "info", group_id=group_id)
         
-        # First check URL
-        if "airtasker.com/discover/" in driver.current_url or "airtasker.com/tasks/" in driver.current_url:
-            dm.add_log("Login successful based on URL redirect", "info", group_id=group_id)
-            login_success = True
+        # Verify login success by URL and presence of avatar element
+        expected_urls = ["https://www.airtasker.com/discover/", "https://www.airtasker.com/tasks/"]
+        avatar_xpath = "//div[contains(@class, 'UserAvatar') or @data-ui-test='avatar']"
         
-        # Try to find avatar element as additional verification
-        try:
-            avatar_element = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.XPATH, avatar_xpath))
-            )
-            dm.add_log("Login confirmed - user avatar found", "info", group_id=group_id)
-            login_success = True
-        except:
-            dm.add_log("Could not find avatar element, but URL check already performed", "warning", group_id=group_id)
+        url_success = any(expected_url in current_url for expected_url in expected_urls)
+        avatar_element = driver.find_elements(By.XPATH, avatar_xpath)
         
-        if login_success:
-            dm.add_log("Login successful", "success", group_id=group_id)
+        if url_success and avatar_element:
+            logger.info("Login successful: URL matches expected patterns and avatar element found")
+            if group_id:
+                dm.add_log("Login successful: URL matches expected patterns and avatar element found", "success", group_id=group_id)
+            return True
+        elif url_success:
+            logger.warning("URL indicates success but avatar element not found. Proceeding with caution.")
+            if group_id:
+                dm.add_log("URL indicates success but avatar element not found. Proceeding with caution.", "warning", group_id=group_id)
             return True
         else:
-            current_url = driver.current_url
-            dm.add_log(f"Login verification failed. Current URL: {current_url}", "error", group_id=group_id)
-            save_screenshot(driver, "login_verification_failed", group_id)
-            raise Exception(f"Login failed: Did not redirect to expected page. Current URL: {current_url}")
-        
+            error_message = f"Login failed: URL {current_url} does not match expected patterns"
+            logger.error(error_message)
+            if group_id:
+                dm.add_log(error_message, "error", group_id=group_id)
+            save_screenshot(driver, "login_failed", group_id)
+            raise Exception(error_message)
+            
     except Exception as e:
-        save_screenshot(driver, "login_error", group_id)
-        dm.add_log(f"Login error: {str(e)}", "error", group_id=group_id)
+        logger.error(f"Login process failed: {str(e)}")
+        logger.error(traceback.format_exc())
+        if group_id:
+            dm.add_log(f"Login process failed: {str(e)}", "error", group_id=group_id)
+        save_screenshot(driver, "login_exception", group_id)
         raise
 
 
@@ -371,7 +465,7 @@ def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_
         dm.add_log(f"Starting Airtasker bot for {email} in {'headless' if headless else 'visible'} mode", "info", group_id=group_id)
         
         # Initialization with headless parameter
-        driver = init_driver(headless=headless)
+        driver = init_driver()
         driver.get("https://www.airtasker.com/")
         time.sleep(random.uniform(5, 8))
         
@@ -434,7 +528,7 @@ def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_
 # Main execution
 # ------------------------------
 def main():
-    driver = init_driver(headless=False)  # False by default but explicitly set for clarity
+    driver = init_driver()  # False by default but explicitly set for clarity
     driver.get("https://www.airtasker.com/")
     time.sleep(random.uniform(5, 8))
     try:
