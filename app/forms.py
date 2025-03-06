@@ -1,5 +1,5 @@
 from flask_wtf import FlaskForm
-from wtforms import StringField, PasswordField, TextAreaField, TimeField, BooleanField, FileField, IntegerField
+from wtforms import StringField, PasswordField, TextAreaField, TimeField, BooleanField, FileField, IntegerField, SelectField, SelectMultipleField
 from wtforms.validators import DataRequired, Length, NumberRange, ValidationError
 import os
 from flask import current_app
@@ -27,8 +27,24 @@ class MessageForm(FlaskForm):
                     raise ValidationError('File must be an image (png, jpg, jpeg, gif)')
 
 class ScheduleForm(FlaskForm):
+    account_id = SelectField('Account', validators=[DataRequired()], coerce=str)
+    city_id = SelectField('City', validators=[DataRequired()], coerce=str)
     start_time = TimeField('Start Time', validators=[DataRequired()])
     end_time = TimeField('End Time', validators=[DataRequired()])
+    days = SelectMultipleField('Days of Week', 
+                              choices=[
+                                  ('Monday', 'Monday'),
+                                  ('Tuesday', 'Tuesday'),
+                                  ('Wednesday', 'Wednesday'),
+                                  ('Thursday', 'Thursday'),
+                                  ('Friday', 'Friday'),
+                                  ('Saturday', 'Saturday'),
+                                  ('Sunday', 'Sunday')
+                              ])
+    max_tasks = IntegerField('Maximum Tasks per Day', 
+                            validators=[DataRequired(), 
+                                       NumberRange(min=1, max=50)],
+                            default=10)
     active = BooleanField('Active', default=True)
 
 class SettingsForm(FlaskForm):

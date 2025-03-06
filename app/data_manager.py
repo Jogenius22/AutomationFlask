@@ -129,14 +129,19 @@ def get_schedules():
     """Get all schedules from JSON file"""
     return _read_file_with_retry(SCHEDULES_FILE)
 
-def add_schedule(start_time, end_time, active=True):
+def add_schedule(account_id, city_id, start_time, end_time, days=None, max_tasks=5, status='active'):
     """Add a new schedule to JSON file"""
     schedules = get_schedules()
     new_schedule = {
         'id': generate_id(),
+        'account_id': account_id,
+        'city_id': city_id,
         'start_time': start_time,
         'end_time': end_time,
-        'active': active,
+        'days': days or ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+        'max_tasks': max_tasks,
+        'status': status,
+        'active': status == 'active',
         'created_at': datetime.utcnow()
     }
     schedules.append(new_schedule)

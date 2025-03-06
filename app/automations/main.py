@@ -3,7 +3,7 @@ import random
 import os
 import logging
 import traceback
-import datetime
+from datetime import datetime
 import subprocess
 import signal
 from selenium import webdriver
@@ -745,7 +745,7 @@ def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_
         # Take initial screenshot
         # We'll create this in the logs directory first since driver isn't available yet
         logs_dir = os.path.join(os.environ.get('DATA_DIR', '/app/data'), 'logs')
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_file = os.path.join(logs_dir, f"startup_{timestamp}.log")
         os.makedirs(logs_dir, exist_ok=True)
         with open(log_file, "w") as f:
@@ -855,7 +855,7 @@ def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_
         # 5. Post comments on a subset of tasks
         try:
             dm.add_log(f"Attempting to post on up to {max_posts} tasks", "info", group_id=group_id)
-            posted_count = comment_on_some_tasks(driver, tasks, message_content, max_to_post=max_posts, image_path=None, group_id=group_id)
+            posted_count = comment_on_some_tasks(driver, tasks, message_content=message_content, max_to_post=max_posts, image_path=None, group_id=group_id)
             
             if posted_count > 0:
                 dm.add_log(f"Successfully posted {posted_count} comments", "success", group_id=group_id)
@@ -951,7 +951,7 @@ def main():
             # 5. Post comments on a subset of tasks
             # Use a generic message for testing
             message = "Hey, you might get better quotes posting on the SmartTasker app. The fees are 25% less!"
-            comment_on_some_tasks(driver, tasks, message, max_to_post=3, image_path=None, group_id=group_id)
+            comment_on_some_tasks(driver, tasks, message_content=message, max_to_post=3, image_path=None, group_id=group_id)
             logger.info("Comments posted successfully")
 
         except Exception as e:

@@ -3,7 +3,7 @@ import time
 import random
 import os
 import logging
-import datetime
+from datetime import datetime
 import traceback
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, ElementClickInterceptedException, StaleElementReferenceException, WebDriverException
@@ -71,7 +71,7 @@ def pick_random_comment():
 # ------------------------------
 def save_screenshot(driver, name_prefix, group_id=None):
     """Save a screenshot with timestamp and prefix"""
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{name_prefix}_{timestamp}.png"
     screenshot_dir = os.path.join(os.environ.get('DATA_DIR', '/app/data'), 'screenshots')
     
