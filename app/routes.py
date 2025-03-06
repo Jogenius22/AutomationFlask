@@ -70,6 +70,12 @@ def allowed_file(filename):
 @bp.route('/dashboard')
 def dashboard():
     """Dashboard with account, city, message management and recent logs"""
+    accounts = []
+    cities = []
+    messages = []
+    logs = Pagination(page=1, per_page=5, total=0, items=[])
+    settings = dm.get_settings()  # Get settings for the dashboard
+    
     try:
         # Get accounts, cities, and messages for the dashboard
         accounts = get_accounts()
@@ -102,31 +108,34 @@ def dashboard():
                         if isinstance(item['created_at'], str):
                             # Convert ISO format to more readable format
                             dt = datetime.fromisoformat(item['created_at'].replace('Z', '+00:00'))
-                            item['created_at'] = dt.strftime('%Y-%m-%d %H:%M:%S')
+                            item['created_at'] = dt
                     except Exception as e:
                         current_app.logger.error(f"Error formatting datetime: {e}")
+                        item['created_at'] = None
                         
                 if 'last_used' in item and item['last_used']:
                     try:
                         if isinstance(item['last_used'], str):
                             # Convert ISO format to more readable format
                             dt = datetime.fromisoformat(item['last_used'].replace('Z', '+00:00'))
-                            item['last_used'] = dt.strftime('%Y-%m-%d %H:%M:%S')
+                            item['last_used'] = dt
                     except Exception as e:
                         current_app.logger.error(f"Error formatting last_used datetime: {e}")
+                        item['last_used'] = None
         
-        return render_template('dashboard.html', 
-                              accounts=accounts,
-                              cities=cities, 
-                              messages=messages,
-                              logs=logs,
-                              title="Dashboard")
-                              
     except Exception as e:
         error_msg = f"Error loading dashboard: {str(e)}"
         current_app.logger.error(error_msg)
         flash(error_msg, 'danger')
-        return render_template('dashboard.html', title="Dashboard - Error Loading Data")
+    
+    # Always return a template with whatever data we have, including settings
+    return render_template('dashboard.html', 
+                          accounts=accounts,
+                          cities=cities, 
+                          messages=messages,
+                          logs=logs,
+                          settings=settings,
+                          title="Dashboard")
 
 @bp.route('/accounts', methods=['GET', 'POST'])
 def accounts():
@@ -504,7 +513,7 @@ def get_screenshot(filename):
     return send_from_directory(SCREENSHOTS_DIR, filename)
 
 @bp.route('/screenshots/<path:filename>')
-def screenshots(filename):
+def screenshots_file(filename):
     """Serve screenshot files"""
     try:
         return send_from_directory(SCREENSHOTS_DIR, filename)

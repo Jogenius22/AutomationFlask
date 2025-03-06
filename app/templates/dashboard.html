@@ -224,9 +224,10 @@ endblock %} {% block extra_head %}
               <div>
                 <h6 class="mb-1">{{ account.email }}</h6>
                 <small class="text-muted">
-                  Last used: {% if account.last_used %} {{
-                  account.last_used.strftime('%Y-%m-%d %H:%M') }} {% else %}
-                  Never {% endif %}
+                  Last used: {% if account.last_used %} {% if account.last_used
+                  is string %} {{ account.last_used }} {% else %} {{
+                  account.last_used.strftime('%Y-%m-%d %H:%M') }} {% endif %} {%
+                  else %} Never {% endif %}
                 </small>
               </div>
               <span
