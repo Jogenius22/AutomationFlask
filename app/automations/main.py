@@ -249,6 +249,8 @@ def get_chrome_options():
     chrome_options.add_argument("--mute-audio")
     chrome_options.add_argument("--no-first-run")
     chrome_options.add_argument("--safebrowsing-disable-auto-update")
+    chrome_options.add_argument("--remote-debugging-port=9222")
+    chrome_options.add_argument("--disable-setuid-sandbox")
 
     return chrome_options
 
@@ -631,7 +633,6 @@ def scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scro
 def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_content=None, group_id=None, headless=False):
     """Run the Airtasker bot with the given parameters"""
     driver = None
-    result = {"status": "error", "message": "Initialization failed"}
 
     try:
         is_gcp = os.getenv('GAE_ENV', '').startswith('standard')
@@ -654,7 +655,7 @@ def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_
 
         driver = init_driver(group_id)
         if not driver:
-            return {"status": "error", "message": "Driver initialization failed"}
+            raise Exception("Driver initialization failed")
 
         driver.get("https://www.airtasker.com/")
         time.sleep(random.uniform(5, 8))
@@ -666,40 +667,36 @@ def run_airtasker_bot(email, password, city_name="Sydney", max_posts=3, message_
         password_input_id = "password"
         submit_button_xpath = "/html/body/main/section/div/div/div/form/div[2]/button"
 
-        login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath)
-        print("Login successful")
+        if not login(driver, email, password, login_button_xpath, email_input_id, password_input_id, submit_button_xpath):
+            raise Exception("Login failed")
 
         tasks_page_url = "https://www.airtasker.com/tasks"
         driver.get(tasks_page_url)
         time.sleep(random.uniform(5, 8))
 
-        set_location_filter(driver, city_name, 100)
-        print(f"Location filter set to {city_name}")
+        if not set_location_filter(driver, city_name, 100):
+            raise Exception("Failed to set location filter")
 
         task_container_xpath = '//a[@data-ui-test="task-list-item" and @data-task-id]'
         title_xpath = './/p[contains(@class,"TaskCard__StyledTitle")]'
         link_xpath = '.'
 
         tasks = scrape_tasks(driver, task_container_xpath, title_xpath, link_xpath, max_scroll=5)
-        print(f"Scraped {len(tasks)} tasks")
+        if not tasks:
+            raise Exception("No tasks found to comment on")
 
-        if tasks:
-            from app.automations.comments import comment_on_some_tasks
-            print(f"Posting comments on up to {max_posts} tasks")
+        from app.automations.comments import comment_on_some_tasks
+        comment_on_some_tasks(
+            driver=driver,
+            tasks=tasks,
+            message_content=message_content,
+            max_to_post=max_posts,
+            image_path=None
+        )
 
-            comment_on_some_tasks(
-                driver=driver,
-                tasks=tasks,
-                message_content=message_content,
-                max_to_post=max_posts,
-                image_path=None
-            )
-
-            save_screenshot(driver, "completed", group_id)
-            print("Commenting completed successfully")
-            result = {"status": "success", "message": "Commenting completed successfully"}
-
-        return result
+        save_screenshot(driver, "completed", group_id)
+        print("Commenting completed successfully")
+        return {"status": "success", "message": "Commenting completed successfully"}
 
     except Exception as e:
         error_msg = f"Error in run_airtasker_bot: {str(e)}"
