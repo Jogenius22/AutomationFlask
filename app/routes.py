@@ -1,5 +1,4 @@
 import os
-import datetime
 import json
 import re
 from flask import Blueprint, render_template, redirect, url_for, request, flash, current_app, send_from_directory, jsonify
@@ -14,7 +13,7 @@ from app.tasks import start_bot_task
 from config import SCREENSHOTS_DIR
 
 import time
-from datetime import datetime
+from datetime import datetime, time
 
 bp = Blueprint('main', __name__)
 
@@ -133,6 +132,21 @@ def accounts():
         return redirect(url_for('main.accounts'))
     
     accounts = dm.get_accounts()
+    
+    # Convert any string dates to datetime objects for the template
+    for account in accounts:
+        if account.get('last_used') and isinstance(account['last_used'], str):
+            try:
+                account['last_used'] = datetime.fromisoformat(account['last_used'])
+            except ValueError:
+                account['last_used'] = None
+        
+        if account.get('created_at') and isinstance(account['created_at'], str):
+            try:
+                account['created_at'] = datetime.fromisoformat(account['created_at'])
+            except ValueError:
+                account['created_at'] = None
+    
     return render_template('accounts.html', form=form, accounts=accounts)
 
 @bp.route('/cities', methods=['GET', 'POST'])
@@ -147,6 +161,15 @@ def cities():
         return redirect(url_for('main.cities'))
     
     cities = dm.get_cities()
+    
+    # Convert any string dates to datetime objects for the template
+    for city in cities:
+        if city.get('created_at') and isinstance(city['created_at'], str):
+            try:
+                city['created_at'] = datetime.fromisoformat(city['created_at'])
+            except ValueError:
+                city['created_at'] = None
+    
     return render_template('cities.html', form=form, cities=cities)
 
 @bp.route('/messages', methods=['GET', 'POST'])
@@ -171,6 +194,21 @@ def messages():
         return redirect(url_for('main.messages'))
     
     messages = dm.get_messages()
+    
+    # Convert any string dates to datetime objects for the template
+    for message in messages:
+        if message.get('created_at') and isinstance(message['created_at'], str):
+            try:
+                message['created_at'] = datetime.fromisoformat(message['created_at'])
+            except ValueError:
+                message['created_at'] = None
+        
+        if message.get('last_used') and isinstance(message['last_used'], str):
+            try:
+                message['last_used'] = datetime.fromisoformat(message['last_used'])
+            except ValueError:
+                message['last_used'] = None
+    
     return render_template('messages.html', form=form, messages=messages)
 
 @bp.route('/schedules', methods=['GET', 'POST'])
@@ -189,14 +227,25 @@ def schedules():
     
     # Format datetime fields for display
     for schedule in schedules:
-        if schedule.get('created_at'):
-            schedule['created_at'] = datetime.datetime.fromisoformat(schedule['created_at'])
+        if schedule.get('created_at') and isinstance(schedule['created_at'], str):
+            try:
+                schedule['created_at'] = datetime.fromisoformat(schedule['created_at'])
+            except ValueError:
+                schedule['created_at'] = None
+                
         if schedule.get('start_time'):
-            parts = schedule['start_time'].split(':')
-            schedule['start_time'] = datetime.time(int(parts[0]), int(parts[1]))
+            try:
+                parts = schedule['start_time'].split(':')
+                schedule['start_time'] = time(int(parts[0]), int(parts[1]))
+            except (ValueError, IndexError):
+                schedule['start_time'] = None
+                
         if schedule.get('end_time'):
-            parts = schedule['end_time'].split(':')
-            schedule['end_time'] = datetime.time(int(parts[0]), int(parts[1]))
+            try:
+                parts = schedule['end_time'].split(':')
+                schedule['end_time'] = time(int(parts[0]), int(parts[1]))
+            except (ValueError, IndexError):
+                schedule['end_time'] = None
     
     return render_template('schedules.html', form=form, schedules=schedules)
 
@@ -239,19 +288,26 @@ def start_bot():
         flash(f'Error starting bot: {str(e)}', 'danger')
         return redirect(url_for('main.dashboard'))
 
-@bp.route('/logs')
+@bp.route('/logs', methods=['GET'])
 def logs():
-    """Display system logs or specific logs for a group ID."""
-    group_id = request.args.get('group_id')
-    page = request.args.get('page', 1, type=int)
-    per_page = 50  # Number of logs per page
-    
     try:
+        per_page = 20
+        page = request.args.get('page', 1, type=int)
+        group_id = request.args.get('group_id')
+        
         log_manager = LogManager()
         
         # If group_id is provided, get logs for that specific group
         if group_id:
             logs_data = log_manager.get_logs(group_id=group_id)
+            
+            # Convert any string timestamps to datetime objects
+            for log in logs_data:
+                if log.get('timestamp') and isinstance(log['timestamp'], str):
+                    try:
+                        log['timestamp'] = datetime.fromisoformat(log['timestamp'])
+                    except ValueError:
+                        log['timestamp'] = None
             
             # Extract account info if this is a bot start log group
             account_info = {}
@@ -294,6 +350,14 @@ def logs():
             # Get the latest logs
             logs_data = log_manager.get_logs(limit=1000)  # Get a large number to find all groups
             
+            # Convert any string timestamps to datetime objects
+            for log in logs_data:
+                if log.get('timestamp') and isinstance(log['timestamp'], str):
+                    try:
+                        log['timestamp'] = datetime.fromisoformat(log['timestamp'])
+                    except ValueError:
+                        log['timestamp'] = None
+            
             # Find unique group IDs for bot runs
             bot_runs = []
             group_ids = set()
@@ -329,6 +393,15 @@ def logs():
             
             # Paginate the general logs
             logs_data = log_manager.get_logs(limit=per_page, offset=(page-1)*per_page)
+            
+            # Convert any string timestamps to datetime objects
+            for log in logs_data:
+                if log.get('timestamp') and isinstance(log['timestamp'], str):
+                    try:
+                        log['timestamp'] = datetime.fromisoformat(log['timestamp'])
+                    except ValueError:
+                        log['timestamp'] = None
+                        
             total_logs = log_manager.count_logs()
             
             # Create a pagination object
@@ -357,6 +430,14 @@ def api_recent_logs():
     try:
         log_manager = LogManager()
         logs_data = log_manager.get_logs(limit=20)  # Get the 20 most recent logs
+        
+        # Convert datetime objects to strings for JSON serialization
+        for log in logs_data:
+            if log.get('timestamp') and not isinstance(log['timestamp'], str):
+                try:
+                    log['timestamp'] = log['timestamp'].isoformat()
+                except AttributeError:
+                    log['timestamp'] = str(log['timestamp'])
         
         # Return JSON response
         return jsonify({
@@ -442,7 +523,7 @@ def screenshots():
             if filename.lower().endswith('.png'):
                 filepath = os.path.join('/screenshot', filename)
                 try:
-                    created_at = datetime.datetime.fromtimestamp(
+                    created_at = datetime.fromtimestamp(
                         os.path.getctime(os.path.join(SCREENSHOTS_DIR, filename))
                     )
                     
