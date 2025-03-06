@@ -71,46 +71,51 @@ def pick_random_comment():
 # ------------------------------
 def save_screenshot(driver, name_prefix, group_id=None):
     """
-    Save a screenshot with the given prefix.
+    Save a screenshot of the current browser window with a timestamp.
+    
+    Args:
+        driver: Selenium WebDriver instance
+        name_prefix: Prefix for the screenshot filename
+        group_id: Optional group ID for logging
     """
-    try:
-        # Get the screenshot directory from environment or use a default
-        screenshot_dir = os.environ.get('SCREENSHOT_DIR', 
-                                       os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 
-                                                  'data', 'screenshots'))
+    if not driver:
+        return
         
-        # Ensure the directory exists
+    # Get the screenshot directory from environment variable or use current directory
+    screenshot_dir = os.environ.get('SCREENSHOT_DIR', os.getcwd())
+    
+    try:
+        # Create the directory if it doesn't exist
         os.makedirs(screenshot_dir, exist_ok=True)
         
-        # Generate filename with timestamp to avoid overwrites
+        # Generate unique filename with timestamp
         timestamp = int(time.time())
         filename = f"{name_prefix}_{timestamp}.png"
         filepath = os.path.join(screenshot_dir, filename)
         
-        # Take the screenshot
+        # Save the screenshot
         driver.save_screenshot(filepath)
-        
-        print(f"Screenshot saved: {filename}")
-        return filepath
+        print(f"Screenshot saved: {filepath}")
+        return filename
     except Exception as e:
-        print(f"Error saving screenshot {name_prefix}: {e}")
+        print(f"Error saving screenshot {name_prefix}: {str(e)}")
         return None
 
 def post_comment_on_task(driver, task_url, custom_message=None, image_path=None, group_id=None):
     """
-    Navigates to the given task URL, picks a random comment,
-    types it, optionally attaches an image, and clicks 'Send'.
+    Navigates to the given task URL, posts the specified message (or a random one),
+    optionally attaches an image, and clicks 'Send'.
     """
     print(f"\n--- Posting comment on: {task_url} ---")
     driver.get(task_url)
     time.sleep(random.uniform(5, 8))
+    
+    # Take a screenshot when we arrive at the task page
+    save_screenshot(driver, "task_page", group_id)
 
-    # Use either the custom message or pick a random one
+    # Choose message - use custom_message if provided, otherwise pick a random one
     comment_text = custom_message if custom_message else pick_random_comment()
-    print(f"Chosen Comment: {comment_text}")
-
-    # Save screenshot before commenting
-    save_screenshot(driver, "before_send_comment", group_id)
+    print(f"Message to post: {comment_text}")
 
     # XPaths for the comment textarea and the 'Send' button
     comment_box_xpath = '//*[@id="airtasker-app"]/main/div/div[1]/div[3]/div/div/div[2]/div/div[6]/div/div[2]/div/div/div/div/div[3]/textarea'
@@ -125,9 +130,12 @@ def post_comment_on_task(driver, task_url, custom_message=None, image_path=None,
         )
     except TimeoutException:
         print("Could not find the comment textarea within 15s. Skipping this task.")
-        return
+        return False
 
     try:
+        # Take screenshot before commenting
+        save_screenshot(driver, "before_send_comment", group_id)
+        
         comment_box = driver.find_element(By.XPATH, comment_box_xpath)
         comment_box.clear()
         for c in comment_text:
@@ -149,28 +157,58 @@ def post_comment_on_task(driver, task_url, custom_message=None, image_path=None,
         driver.find_element(By.XPATH, send_button_xpath).click()
         print("Comment posted!")
         
-        # Save screenshot after commenting
+        # Take screenshot after sending
         save_screenshot(driver, "after_send_comment", group_id)
+        
         time.sleep(random.uniform(3, 6))
-    except NoSuchElementException:
-        print("Comment box or Send button not found. Possibly different layout.")
+        return True
+    except NoSuchElementException as e:
+        print(f"Element not found: {str(e)}")
+        return False
+    except Exception as e:
+        print(f"Error posting comment: {str(e)}")
+        return False
 
 def comment_on_some_tasks(driver, tasks, message_content=None, max_to_post=3, image_path=None, group_id=None):
     """
     Given a list of task dicts (each with a 'link'),
     posts random comments on up to 'max_to_post' tasks.
     Optionally attaches an image.
+    
+    Parameters:
+    - driver: Selenium WebDriver instance
+    - tasks: List of task dictionaries with 'link' keys
+    - message_content: Optional custom message to post (if None, a random one is picked)
+    - max_to_post: Maximum number of tasks to post on
+    - image_path: Optional path to an image file to attach
+    - group_id: Optional group ID for logging
     """
     if not tasks:
-        print("No tasks provided to comment on.")
+        print("No tasks provided to comment on")
         return
-
-    random.shuffle(tasks)
-    tasks_to_comment = tasks[:max_to_post]
-    for i, t in enumerate(tasks_to_comment, start=1):
-        link = t.get("link")
+    
+    # Make a copy of the tasks list to avoid modifying the original
+    tasks_copy = tasks.copy()
+    random.shuffle(tasks_copy)
+    
+    # Limit to max_to_post
+    tasks_to_comment = tasks_copy[:max_to_post]
+    
+    success_count = 0
+    for i, task in enumerate(tasks_to_comment, start=1):
+        link = task.get("link")
         if not link:
             print(f"Task {i} missing link; skipping.")
             continue
-        post_comment_on_task(driver, link, custom_message=message_content, image_path=image_path, group_id=group_id)
-    print(f"\nDone posting on up to {max_to_post} tasks.") 
+        
+        try:
+            print(f"\n--- Posting comment on task {i}/{len(tasks_to_comment)}: {link} ---")
+            # Use the custom message if provided, otherwise use a random one
+            post_comment_on_task(driver, link, custom_message=message_content, image_path=image_path, group_id=group_id)
+            success_count += 1
+            time.sleep(random.uniform(3, 6))  # Add delay between posts
+        except Exception as e:
+            print(f"Error posting on task {i}: {str(e)}")
+    
+    print(f"\nDone posting on {success_count} out of {len(tasks_to_comment)} tasks.")
+    return success_count > 0 

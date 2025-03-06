@@ -122,45 +122,33 @@ def dashboard():
 
 @bp.route('/accounts', methods=['GET', 'POST'])
 def accounts():
-    try:
-        form = AccountForm()
-        if form.validate_on_submit():
-            dm.add_account(
-                email=form.email.data,
-                password=form.password.data,
-                capsolver_key=form.capsolver_key.data,
-                active=form.active.data
-            )
+    """Handle the accounts page and form submission."""
+    form = AccountForm()
+    accounts = dm.get_accounts()
+    
+    # Convert string dates to datetime objects if needed
+    for account in accounts:
+        if account.get('last_used') and isinstance(account['last_used'], str):
+            account['last_used'] = dm._string_to_datetime(account['last_used'])
+    
+    if form.validate_on_submit():
+        if dm.add_account(
+            email=form.email.data,
+            password=form.password.data,
+            capsolver_key=form.capsolver_key.data,
+            active=form.active.data
+        ):
             flash('Account added successfully', 'success')
-            return redirect(url_for('main.accounts'))
+        else:
+            flash('Error adding account', 'danger')
+        return redirect(url_for('main.accounts'))
         
-        accounts = dm.get_accounts()
-        
-        # Convert any string dates to datetime objects for the template
-        for account in accounts:
-            try:
-                if account.get('last_used') and isinstance(account['last_used'], str):
-                    try:
-                        account['last_used'] = datetime.fromisoformat(account['last_used'])
-                    except ValueError:
-                        account['last_used'] = None
-                
-                if account.get('created_at') and isinstance(account['created_at'], str):
-                    try:
-                        account['created_at'] = datetime.fromisoformat(account['created_at'])
-                    except ValueError:
-                        account['created_at'] = None
-            except Exception as e:
-                current_app.logger.error(f"Error processing account {account.get('id')}: {str(e)}")
-                # Don't let a single account error break the whole page
-                continue
-        
-        return render_template('accounts.html', form=form, accounts=accounts)
-    except Exception as e:
-        error_msg = f"Error in accounts route: {str(e)}\n{traceback.format_exc()}"
-        current_app.logger.error(error_msg)
-        flash(error_msg, 'danger')
-        return render_template('error.html', error=error_msg), 500
+    return render_template(
+        'accounts.html', 
+        accounts=accounts,
+        form=form,
+        title="Accounts"
+    )
 
 @bp.route('/cities', methods=['GET', 'POST'])
 def cities():
@@ -198,53 +186,50 @@ def cities():
 
 @bp.route('/messages', methods=['GET', 'POST'])
 def messages():
-    try:
-        form = MessageForm()
-        if form.validate_on_submit():
-            image_filename = None
-            
-            # Handle image upload
-            if form.image.data:
-                image = form.image.data
-                if image and allowed_file(image.filename):
-                    filename = secure_filename(image.filename)
-                    image_filename = filename
-                    image.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
-            
-            dm.add_message(
-                content=form.content.data,
-                image=image_filename
-            )
-            flash('Message added successfully', 'success')
-            return redirect(url_for('main.messages'))
-        
-        messages = dm.get_messages()
-        
-        # Convert any string dates to datetime objects for the template
-        for message in messages:
+    """Handle the messages page and form submission."""
+    form = MessageForm()
+    messages = dm.get_messages()
+    
+    # Convert string dates to datetime objects if needed
+    for message in messages:
+        if message.get('created_at') and isinstance(message['created_at'], str):
+            message['created_at'] = dm._string_to_datetime(message['created_at'])
+    
+    settings = dm.get_settings()
+    max_posts = settings.get('max_posts_per_day', 3) if settings else 3
+    
+    if form.validate_on_submit():
+        uploaded_image = None
+        if form.image.data:
             try:
-                if message.get('created_at') and isinstance(message['created_at'], str):
-                    try:
-                        message['created_at'] = datetime.fromisoformat(message['created_at'])
-                    except ValueError:
-                        message['created_at'] = None
+                image_filename = secure_filename(form.image.data.filename)
+                uploads_dir = os.path.join(dm.DATA_DIR, 'uploads')
+                os.makedirs(uploads_dir, exist_ok=True)
                 
-                if message.get('last_used') and isinstance(message['last_used'], str):
-                    try:
-                        message['last_used'] = datetime.fromisoformat(message['last_used'])
-                    except ValueError:
-                        message['last_used'] = None
+                # Save the uploaded file
+                image_path = os.path.join(uploads_dir, image_filename)
+                form.image.data.save(image_path)
+                uploaded_image = image_filename
+                
+                flash(f'Image uploaded: {image_filename}', 'success')
             except Exception as e:
-                current_app.logger.error(f"Error processing message {message.get('id')}: {str(e)}")
-                # Don't let a single message error break the whole page
-                continue
-        
-        return render_template('messages.html', form=form, messages=messages)
-    except Exception as e:
-        error_msg = f"Error in messages route: {str(e)}\n{traceback.format_exc()}"
-        current_app.logger.error(error_msg)
-        flash(error_msg, 'danger')
-        return render_template('error.html', error=error_msg), 500
+                flash(f'Error uploading image: {str(e)}', 'danger')
+                
+        # Add the message
+        if dm.add_message(content=form.content.data, image=uploaded_image):
+            flash('Message added successfully', 'success')
+        else:
+            flash('Error adding message', 'danger')
+            
+        return redirect(url_for('main.messages'))
+    
+    return render_template(
+        'messages.html',
+        messages=messages,
+        form=form,
+        title="Messages",
+        max_posts=max_posts
+    )
 
 @bp.route('/schedules', methods=['GET', 'POST'])
 def schedules():

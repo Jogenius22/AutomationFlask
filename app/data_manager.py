@@ -14,18 +14,19 @@ def generate_id():
     return str(uuid.uuid4())
 
 def datetime_converter(obj):
-    """Convert datetime objects to ISO format strings for JSON serialization."""
+    """Convert datetime objects to ISO format strings for JSON serialization"""
     if isinstance(obj, datetime.datetime):
         return obj.isoformat()
-    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+    raise TypeError("Type not serializable")
 
 def _string_to_datetime(datetime_str):
-    """Convert ISO format string to datetime object"""
+    """Safely convert ISO format string to datetime object"""
     if not datetime_str or not isinstance(datetime_str, str):
         return None
     try:
         return datetime.datetime.fromisoformat(datetime_str)
     except (ValueError, TypeError):
+        # If the string isn't a valid ISO format, return None
         return None
 
 def _read_file_with_retry(file_path, max_retries=3):
@@ -52,39 +53,26 @@ def _read_file_with_retry(file_path, max_retries=3):
                     print(f"Failed to backup corrupted file: {rename_e}")
                 return []
 
-def _write_file_with_retry(file_path, data, max_retries=3):
-    """Write data to a JSON file with retry mechanism for resilience"""
-    # First, ensure the directory exists
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
-    
-    retries = 0
-    while retries < max_retries:
+def _write_file_with_retry(file_path, data, max_retries=3, default=None):
+    """Write data to a JSON file with retry logic."""
+    for attempt in range(max_retries):
         try:
-            # Write to a temporary file first
-            temp_file = f"{file_path}.tmp"
-            with open(temp_file, 'w') as f:
-                json.dump(data, f, indent=4, default=datetime_converter)
-                # Force flush to disk inside the with block to ensure file is not closed prematurely
-                f.flush()
-                os.fsync(f.fileno())
-            
-            # Rename to actual file (atomic operation on most filesystems)
-            os.replace(temp_file, file_path)
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            with open(file_path, 'w') as f:
+                json.dump(data, f, default=default)
             return True
         except Exception as e:
-            print(f"Error writing {file_path}: {e}. Retry {retries+1}/{max_retries}")
-            retries += 1
-            time.sleep(random.uniform(0.5, 2.0))  # Random backoff
-    
-    print(f"Failed to write to {file_path} after {max_retries} attempts")
-    return False
+            if attempt == max_retries - 1:
+                print(f"Failed to write to {file_path} after {max_retries} attempts: {str(e)}")
+                return False
+            time.sleep(0.5)  # Wait before retrying
 
 def get_accounts():
     """Retrieve all accounts from the accounts JSON file."""
     accounts = _read_file_with_retry(ACCOUNTS_FILE)
     # Convert string dates to datetime objects
     for account in accounts:
-        if 'last_used' in account and account['last_used']:
+        if account.get('last_used') and isinstance(account['last_used'], str):
             account['last_used'] = _string_to_datetime(account['last_used'])
         if 'created_at' in account and account['created_at']:
             account['created_at'] = _string_to_datetime(account['created_at'])
@@ -99,19 +87,18 @@ def add_account(email, password, capsolver_key=None, active=True):
         'password': password,
         'capsolver_key': capsolver_key,
         'active': active,
-        'last_used': None,
-        'created_at': datetime.utcnow()
+        'last_used': datetime.datetime.now(),
+        'created_at': datetime.datetime.now()
     }
     accounts.append(new_account)
-    _write_file_with_retry(ACCOUNTS_FILE, accounts)
-    return new_account
+    return _write_file_with_retry(ACCOUNTS_FILE, accounts, default=datetime_converter)
 
 def get_cities():
     """Retrieve all cities from the cities JSON file."""
     cities = _read_file_with_retry(CITIES_FILE)
     # Convert string dates to datetime objects
     for city in cities:
-        if 'created_at' in city and city['created_at']:
+        if city.get('created_at') and isinstance(city['created_at'], str):
             city['created_at'] = _string_to_datetime(city['created_at'])
     return cities
 
@@ -122,18 +109,17 @@ def add_city(name, radius):
         'id': generate_id(),
         'name': name,
         'radius': int(radius),
-        'created_at': datetime.utcnow()
+        'created_at': datetime.datetime.now()
     }
     cities.append(new_city)
-    _write_file_with_retry(CITIES_FILE, cities)
-    return new_city
+    return _write_file_with_retry(CITIES_FILE, cities, default=datetime_converter)
 
 def get_messages():
     """Retrieve all messages from the messages JSON file."""
     messages = _read_file_with_retry(MESSAGES_FILE)
     # Convert string dates to datetime objects
     for message in messages:
-        if 'created_at' in message and message['created_at']:
+        if message.get('created_at') and isinstance(message['created_at'], str):
             message['created_at'] = _string_to_datetime(message['created_at'])
     return messages
 
@@ -144,21 +130,19 @@ def add_message(content, image=None):
         'id': generate_id(),
         'content': content,
         'image': image,
-        'created_at': datetime.utcnow(),
-        'last_used': None
+        'created_at': datetime.datetime.now()
     }
     messages.append(new_message)
-    _write_file_with_retry(MESSAGES_FILE, messages)
-    return new_message
+    return _write_file_with_retry(MESSAGES_FILE, messages, default=datetime_converter)
 
 def get_schedules():
     """Retrieve all schedules from the schedules JSON file."""
     schedules = _read_file_with_retry(SCHEDULES_FILE)
     # Convert string dates to datetime objects
     for schedule in schedules:
-        if 'created_at' in schedule and schedule['created_at']:
+        if schedule.get('created_at') and isinstance(schedule['created_at'], str):
             schedule['created_at'] = _string_to_datetime(schedule['created_at'])
-        if 'last_run' in schedule and schedule['last_run']:
+        if schedule.get('last_run') and isinstance(schedule['last_run'], str):
             schedule['last_run'] = _string_to_datetime(schedule['last_run'])
     return schedules
 
@@ -175,11 +159,10 @@ def add_schedule(account_id, city_id, start_time, end_time, days=None, max_tasks
         'max_tasks': max_tasks,
         'status': status,
         'active': status == 'active',
-        'created_at': datetime.utcnow()
+        'created_at': datetime.datetime.now()
     }
     schedules.append(new_schedule)
-    _write_file_with_retry(SCHEDULES_FILE, schedules)
-    return new_schedule
+    return _write_file_with_retry(SCHEDULES_FILE, schedules, default=datetime_converter)
 
 def get_logs(page=1, per_page=10, group_id=None, log_level_filter=None):
     """
@@ -286,7 +269,7 @@ def add_log(message, level='info', group_id=None, category='automation'):
             'message': message,
             'level': level,
             'category': category,
-            'timestamp': datetime.now()  # Use datetime object directly
+            'timestamp': datetime.datetime.now()  # Use datetime object directly
         }
         
         # Add group_id if provided
@@ -315,7 +298,7 @@ def add_log(message, level='info', group_id=None, category='automation'):
             'message': f"Error adding log: {str(e)}",
             'level': 'error',
             'category': 'essential',
-            'timestamp': datetime.now()  # Use datetime object directly
+            'timestamp': datetime.datetime.now()  # Use datetime object directly
         }
 
 def get_settings():
@@ -361,29 +344,29 @@ def get_message_by_id(message_id):
     return None
 
 def update_account_last_used(account_id):
-    """Update the last_used field of the account with the current datetime."""
-    accounts = get_accounts()
-    
-    for account in accounts:
-        if account.get('id') == account_id:
-            account['last_used'] = datetime.datetime.now()
-    
-    _write_file_with_retry(ACCOUNTS_FILE, accounts)
-    return True
+    """Update the last_used field of an account to the current datetime."""
+    try:
+        accounts = get_accounts()
+        for account in accounts:
+            if account['id'] == account_id:
+                account['last_used'] = datetime.datetime.now()
+                return _write_file_with_retry(ACCOUNTS_FILE, accounts, default=datetime_converter)
+        return False
+    except Exception as e:
+        print(f"Error updating account last used: {str(e)}")
+        return False
 
 def delete_account(account_id):
     """Delete an account by ID"""
     accounts = get_accounts()
     accounts = [account for account in accounts if account['id'] != account_id]
-    _write_file_with_retry(ACCOUNTS_FILE, accounts)
-    return True
+    return _write_file_with_retry(ACCOUNTS_FILE, accounts, default=datetime_converter)
 
 def delete_city(city_id):
     """Delete a city by ID"""
     cities = get_cities()
     cities = [city for city in cities if city['id'] != city_id]
-    _write_file_with_retry(CITIES_FILE, cities)
-    return True
+    return _write_file_with_retry(CITIES_FILE, cities, default=datetime_converter)
 
 def delete_message(message_id):
     """Delete a message by ID"""
@@ -398,17 +381,13 @@ def delete_message(message_id):
     # Filter out the message to be deleted
     messages = [message for message in messages if message['id'] != message_id]
     
-    _write_file_with_retry(MESSAGES_FILE, messages)
-    
-    # Return the image filename if it exists, so it can be deleted from the filesystem
-    return image_to_delete
+    return _write_file_with_retry(MESSAGES_FILE, messages, default=datetime_converter)
 
 def delete_schedule(schedule_id):
     """Delete a schedule by ID"""
     schedules = get_schedules()
     schedules = [schedule for schedule in schedules if schedule['id'] != schedule_id]
-    _write_file_with_retry(SCHEDULES_FILE, schedules)
-    return True
+    return _write_file_with_retry(SCHEDULES_FILE, schedules, default=datetime_converter)
 
 def update_last_used(account_id):
     """Update the last_used timestamp for an account"""
@@ -416,8 +395,7 @@ def update_last_used(account_id):
     for account in accounts:
         if account['id'] == account_id:
             account['last_used'] = datetime.datetime.now().isoformat()
-            _write_file_with_retry(ACCOUNTS_FILE, accounts)
-            return True
+            return _write_file_with_retry(ACCOUNTS_FILE, accounts, default=datetime_converter)
     return False
 
 def update_account(account_id, **kwargs):
@@ -426,9 +404,8 @@ def update_account(account_id, **kwargs):
     for account in accounts:
         if account.get('id') == account_id:
             account.update(kwargs)
-            _write_file_with_retry(ACCOUNTS_FILE, accounts)
-            return account
-    return None
+            return _write_file_with_retry(ACCOUNTS_FILE, accounts, default=datetime_converter)
+    return False
 
 def update_city(city_id, **kwargs):
     """Update an existing city"""
@@ -436,9 +413,8 @@ def update_city(city_id, **kwargs):
     for city in cities:
         if city.get('id') == city_id:
             city.update(kwargs)
-            _write_file_with_retry(CITIES_FILE, cities)
-            return city
-    return None
+            return _write_file_with_retry(CITIES_FILE, cities, default=datetime_converter)
+    return False
 
 def update_message(message_id, **kwargs):
     """Update a message by ID with provided fields"""
@@ -447,8 +423,7 @@ def update_message(message_id, **kwargs):
         if message['id'] == message_id:
             for key, value in kwargs.items():
                 message[key] = value
-            _write_file_with_retry(MESSAGES_FILE, messages)
-            return True
+            return _write_file_with_retry(MESSAGES_FILE, messages, default=datetime_converter)
     return False
 
 def update_schedule(schedule_id, **kwargs):
@@ -458,8 +433,7 @@ def update_schedule(schedule_id, **kwargs):
         if schedule['id'] == schedule_id:
             for key, value in kwargs.items():
                 schedule[key] = value
-            _write_file_with_retry(SCHEDULES_FILE, schedules)
-            return True
+            return _write_file_with_retry(SCHEDULES_FILE, schedules, default=datetime_converter)
     return False
 
 class LogManager:
