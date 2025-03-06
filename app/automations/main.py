@@ -411,7 +411,7 @@ def login(driver, email, password,
         logger.info("Navigating directly to the login page")
         if group_id:
             dm.add_log("Navigating directly to the login page", "info", group_id=group_id)
-        driver.get("https://auth.airtasker.com/user_sessions/new")
+        driver.get("https://www.airtasker.com/login")
         
         # Wait for login page to fully load
         time.sleep(random.uniform(15, 20))  # Allow more time for Capsolver to initialize
