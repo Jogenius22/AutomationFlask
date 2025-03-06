@@ -12,14 +12,28 @@ from selenium.webdriver.support import expected_conditions as EC
 from app import data_manager as dm
 
 # Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(os.path.join(os.environ.get('DATA_DIR', '/app/data'), 'logs', 'comments.log'))
-    ]
-)
+try:
+    # Make sure logs directory exists
+    log_dir = os.path.join(os.environ.get('DATA_DIR', os.path.join(os.getcwd(), 'data')), 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Set up logging with file handler
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(os.path.join(log_dir, 'comments.log'))
+        ]
+    )
+except Exception as e:
+    # Fallback to console-only logging if file logging fails
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    print(f"Warning: Could not set up file logging: {str(e)}")
+
 logger = logging.getLogger(__name__)
 
 # ------------------------------
