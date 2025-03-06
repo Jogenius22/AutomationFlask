@@ -14,6 +14,7 @@ from config import SCREENSHOTS_DIR
 
 import time
 from datetime import datetime, time
+import traceback
 
 bp = Blueprint('main', __name__)
 
@@ -121,133 +122,184 @@ def dashboard():
 
 @bp.route('/accounts', methods=['GET', 'POST'])
 def accounts():
-    form = AccountForm()
-    if form.validate_on_submit():
-        dm.add_account(
-            email=form.email.data,
-            password=form.password.data,
-            active=form.active.data
-        )
-        flash('Account added successfully', 'success')
-        return redirect(url_for('main.accounts'))
-    
-    accounts = dm.get_accounts()
-    
-    # Convert any string dates to datetime objects for the template
-    for account in accounts:
-        if account.get('last_used') and isinstance(account['last_used'], str):
-            try:
-                account['last_used'] = datetime.fromisoformat(account['last_used'])
-            except ValueError:
-                account['last_used'] = None
+    try:
+        form = AccountForm()
+        if form.validate_on_submit():
+            dm.add_account(
+                email=form.email.data,
+                password=form.password.data,
+                capsolver_key=form.capsolver_key.data
+            )
+            flash('Account added successfully', 'success')
+            return redirect(url_for('main.accounts'))
         
-        if account.get('created_at') and isinstance(account['created_at'], str):
+        accounts = dm.get_accounts()
+        
+        # Convert any string dates to datetime objects for the template
+        for account in accounts:
             try:
-                account['created_at'] = datetime.fromisoformat(account['created_at'])
-            except ValueError:
-                account['created_at'] = None
-    
-    return render_template('accounts.html', form=form, accounts=accounts)
+                if account.get('last_used') and isinstance(account['last_used'], str):
+                    try:
+                        account['last_used'] = datetime.fromisoformat(account['last_used'])
+                    except ValueError:
+                        account['last_used'] = None
+                
+                if account.get('created_at') and isinstance(account['created_at'], str):
+                    try:
+                        account['created_at'] = datetime.fromisoformat(account['created_at'])
+                    except ValueError:
+                        account['created_at'] = None
+            except Exception as e:
+                current_app.logger.error(f"Error processing account {account.get('id')}: {str(e)}")
+                # Don't let a single account error break the whole page
+                continue
+        
+        return render_template('accounts.html', form=form, accounts=accounts)
+    except Exception as e:
+        error_msg = f"Error in accounts route: {str(e)}\n{traceback.format_exc()}"
+        current_app.logger.error(error_msg)
+        flash(error_msg, 'danger')
+        return render_template('error.html', error=error_msg), 500
 
 @bp.route('/cities', methods=['GET', 'POST'])
 def cities():
-    form = CityForm()
-    if form.validate_on_submit():
-        dm.add_city(
-            name=form.name.data,
-            radius=form.radius.data
-        )
-        flash('City added successfully', 'success')
-        return redirect(url_for('main.cities'))
-    
-    cities = dm.get_cities()
-    
-    # Convert any string dates to datetime objects for the template
-    for city in cities:
-        if city.get('created_at') and isinstance(city['created_at'], str):
+    try:
+        form = CityForm()
+        if form.validate_on_submit():
+            dm.add_city(
+                name=form.name.data,
+                radius=form.radius.data
+            )
+            flash('City added successfully', 'success')
+            return redirect(url_for('main.cities'))
+        
+        cities = dm.get_cities()
+        
+        # Convert any string dates to datetime objects for the template
+        for city in cities:
             try:
-                city['created_at'] = datetime.fromisoformat(city['created_at'])
-            except ValueError:
-                city['created_at'] = None
-    
-    return render_template('cities.html', form=form, cities=cities)
+                if city.get('created_at') and isinstance(city['created_at'], str):
+                    try:
+                        city['created_at'] = datetime.fromisoformat(city['created_at'])
+                    except ValueError:
+                        city['created_at'] = None
+            except Exception as e:
+                current_app.logger.error(f"Error processing city {city.get('id')}: {str(e)}")
+                # Don't let a single city error break the whole page
+                continue
+        
+        return render_template('cities.html', form=form, cities=cities)
+    except Exception as e:
+        error_msg = f"Error in cities route: {str(e)}\n{traceback.format_exc()}"
+        current_app.logger.error(error_msg)
+        flash(error_msg, 'danger')
+        return render_template('error.html', error=error_msg), 500
 
 @bp.route('/messages', methods=['GET', 'POST'])
 def messages():
-    form = MessageForm()
-    if form.validate_on_submit():
-        image_filename = None
+    try:
+        form = MessageForm()
+        if form.validate_on_submit():
+            image_filename = None
+            
+            # Handle image upload
+            if form.image.data:
+                image = form.image.data
+                if image and allowed_file(image.filename):
+                    filename = secure_filename(image.filename)
+                    image_filename = filename
+                    image.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
+            
+            dm.add_message(
+                content=form.content.data,
+                image=image_filename
+            )
+            flash('Message added successfully', 'success')
+            return redirect(url_for('main.messages'))
         
-        # Handle image upload
-        if form.image.data:
-            image = form.image.data
-            if image and allowed_file(image.filename):
-                filename = secure_filename(image.filename)
-                image_filename = filename
-                image.save(os.path.join(current_app.config['UPLOAD_FOLDER'], filename))
+        messages = dm.get_messages()
         
-        dm.add_message(
-            content=form.content.data,
-            image=image_filename
-        )
-        flash('Message added successfully', 'success')
-        return redirect(url_for('main.messages'))
-    
-    messages = dm.get_messages()
-    
-    # Convert any string dates to datetime objects for the template
-    for message in messages:
-        if message.get('created_at') and isinstance(message['created_at'], str):
+        # Convert any string dates to datetime objects for the template
+        for message in messages:
             try:
-                message['created_at'] = datetime.fromisoformat(message['created_at'])
-            except ValueError:
-                message['created_at'] = None
+                if message.get('created_at') and isinstance(message['created_at'], str):
+                    try:
+                        message['created_at'] = datetime.fromisoformat(message['created_at'])
+                    except ValueError:
+                        message['created_at'] = None
+                
+                if message.get('last_used') and isinstance(message['last_used'], str):
+                    try:
+                        message['last_used'] = datetime.fromisoformat(message['last_used'])
+                    except ValueError:
+                        message['last_used'] = None
+            except Exception as e:
+                current_app.logger.error(f"Error processing message {message.get('id')}: {str(e)}")
+                # Don't let a single message error break the whole page
+                continue
         
-        if message.get('last_used') and isinstance(message['last_used'], str):
-            try:
-                message['last_used'] = datetime.fromisoformat(message['last_used'])
-            except ValueError:
-                message['last_used'] = None
-    
-    return render_template('messages.html', form=form, messages=messages)
+        return render_template('messages.html', form=form, messages=messages)
+    except Exception as e:
+        error_msg = f"Error in messages route: {str(e)}\n{traceback.format_exc()}"
+        current_app.logger.error(error_msg)
+        flash(error_msg, 'danger')
+        return render_template('error.html', error=error_msg), 500
 
 @bp.route('/schedules', methods=['GET', 'POST'])
 def schedules():
-    form = ScheduleForm()
-    if form.validate_on_submit():
-        dm.add_schedule(
-            start_time=form.start_time.data.strftime('%H:%M'),
-            end_time=form.end_time.data.strftime('%H:%M'),
-            active=form.active.data
-        )
-        flash('Schedule added successfully', 'success')
-        return redirect(url_for('main.schedules'))
-    
-    schedules = dm.get_schedules()
-    
-    # Format datetime fields for display
-    for schedule in schedules:
-        if schedule.get('created_at') and isinstance(schedule['created_at'], str):
+    try:
+        form = ScheduleForm()
+        form.account_id.choices = [(a['id'], a['email']) for a in dm.get_accounts()]
+        form.city_id.choices = [(c['id'], c['name']) for c in dm.get_cities()]
+        
+        if form.validate_on_submit():
+            dm.add_schedule(
+                account_id=form.account_id.data,
+                city_id=form.city_id.data,
+                start_time=form.start_time.data.strftime('%H:%M'),
+                end_time=form.end_time.data.strftime('%H:%M'),
+                days=form.days.data,
+                max_tasks=form.max_tasks.data,
+                status='active'
+            )
+            flash('Schedule added successfully', 'success')
+            return redirect(url_for('main.schedules'))
+        
+        schedules = dm.get_schedules()
+        
+        # Format datetime fields for display
+        for schedule in schedules:
             try:
-                schedule['created_at'] = datetime.fromisoformat(schedule['created_at'])
-            except ValueError:
-                schedule['created_at'] = None
-                
-        if schedule.get('start_time'):
-            try:
-                parts = schedule['start_time'].split(':')
-                schedule['start_time'] = time(int(parts[0]), int(parts[1]))
-            except (ValueError, IndexError):
-                schedule['start_time'] = None
-                
-        if schedule.get('end_time'):
-            try:
-                parts = schedule['end_time'].split(':')
-                schedule['end_time'] = time(int(parts[0]), int(parts[1]))
-            except (ValueError, IndexError):
-                schedule['end_time'] = None
-    
-    return render_template('schedules.html', form=form, schedules=schedules)
+                if schedule.get('created_at') and isinstance(schedule['created_at'], str):
+                    try:
+                        schedule['created_at'] = datetime.fromisoformat(schedule['created_at'])
+                    except ValueError:
+                        schedule['created_at'] = None
+                    
+                if schedule.get('start_time'):
+                    try:
+                        parts = schedule['start_time'].split(':')
+                        schedule['start_time'] = time(int(parts[0]), int(parts[1]))
+                    except (ValueError, IndexError):
+                        schedule['start_time'] = None
+                    
+                if schedule.get('end_time'):
+                    try:
+                        parts = schedule['end_time'].split(':')
+                        schedule['end_time'] = time(int(parts[0]), int(parts[1]))
+                    except (ValueError, IndexError):
+                        schedule['end_time'] = None
+            except Exception as e:
+                current_app.logger.error(f"Error processing schedule {schedule.get('id')}: {str(e)}")
+                # Don't let a single schedule error break the whole page
+                continue
+        
+        return render_template('schedules.html', form=form, schedules=schedules)
+    except Exception as e:
+        error_msg = f"Error in schedules route: {str(e)}\n{traceback.format_exc()}"
+        current_app.logger.error(error_msg)
+        flash(error_msg, 'danger')
+        return render_template('error.html', error=error_msg), 500
 
 @bp.route('/start', methods=['POST'])
 def start_bot():
@@ -303,11 +355,16 @@ def logs():
             
             # Convert any string timestamps to datetime objects
             for log in logs_data:
-                if log.get('timestamp') and isinstance(log['timestamp'], str):
-                    try:
-                        log['timestamp'] = datetime.fromisoformat(log['timestamp'])
-                    except ValueError:
-                        log['timestamp'] = None
+                try:
+                    if log.get('timestamp') and isinstance(log['timestamp'], str):
+                        try:
+                            log['timestamp'] = datetime.fromisoformat(log['timestamp'])
+                        except ValueError:
+                            log['timestamp'] = None
+                except Exception as e:
+                    current_app.logger.error(f"Error processing log timestamp: {str(e)}")
+                    # Don't let a single log error break the whole page
+                    continue
             
             # Extract account info if this is a bot start log group
             account_info = {}
@@ -352,11 +409,16 @@ def logs():
             
             # Convert any string timestamps to datetime objects
             for log in logs_data:
-                if log.get('timestamp') and isinstance(log['timestamp'], str):
-                    try:
-                        log['timestamp'] = datetime.fromisoformat(log['timestamp'])
-                    except ValueError:
-                        log['timestamp'] = None
+                try:
+                    if log.get('timestamp') and isinstance(log['timestamp'], str):
+                        try:
+                            log['timestamp'] = datetime.fromisoformat(log['timestamp'])
+                        except ValueError:
+                            log['timestamp'] = None
+                except Exception as e:
+                    current_app.logger.error(f"Error processing log timestamp: {str(e)}")
+                    # Don't let a single log error break the whole page
+                    continue
             
             # Find unique group IDs for bot runs
             bot_runs = []
@@ -380,7 +442,7 @@ def logs():
                                     account_data = json.loads(json_match.group(0))
                                     account_name = account_data.get('username', 'Unknown')
                             except Exception as e:
-                                pass
+                                current_app.logger.error(f"Error extracting account name: {str(e)}")
                                 
                         bot_runs.append({
                             'group_id': group_id,
@@ -389,18 +451,26 @@ def logs():
                         })
             
             # Sort bot runs by timestamp (newest first)
-            bot_runs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            try:
+                bot_runs.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            except Exception as e:
+                current_app.logger.error(f"Error sorting bot runs: {str(e)}")
             
             # Paginate the general logs
             logs_data = log_manager.get_logs(limit=per_page, offset=(page-1)*per_page)
             
             # Convert any string timestamps to datetime objects
             for log in logs_data:
-                if log.get('timestamp') and isinstance(log['timestamp'], str):
-                    try:
-                        log['timestamp'] = datetime.fromisoformat(log['timestamp'])
-                    except ValueError:
-                        log['timestamp'] = None
+                try:
+                    if log.get('timestamp') and isinstance(log['timestamp'], str):
+                        try:
+                            log['timestamp'] = datetime.fromisoformat(log['timestamp'])
+                        except ValueError:
+                            log['timestamp'] = None
+                except Exception as e:
+                    current_app.logger.error(f"Error processing log timestamp: {str(e)}")
+                    # Don't let a single log error break the whole page
+                    continue
                         
             total_logs = log_manager.count_logs()
             
@@ -414,15 +484,11 @@ def logs():
                                   logs=logs_pagination, 
                                   bot_runs=bot_runs[:10],  # Show only the 10 most recent bot runs
                                   title="System Logs")
-    
     except Exception as e:
-        error_msg = f"Error retrieving logs: {str(e)}"
+        error_msg = f"Error in logs route: {str(e)}\n{traceback.format_exc()}"
         current_app.logger.error(error_msg)
         flash(error_msg, 'danger')
-        return render_template('logs.html', 
-                              logs=Pagination(page=1, per_page=per_page, total=0, items=[]),
-                              error=error_msg,
-                              title="Logs - Error")
+        return render_template('error.html', error=error_msg), 500
 
 @bp.route('/api/recent_logs')
 def api_recent_logs():
