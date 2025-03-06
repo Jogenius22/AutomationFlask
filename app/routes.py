@@ -128,7 +128,8 @@ def accounts():
             dm.add_account(
                 email=form.email.data,
                 password=form.password.data,
-                capsolver_key=form.capsolver_key.data
+                capsolver_key=form.capsolver_key.data,
+                active=form.active.data
             )
             flash('Account added successfully', 'success')
             return redirect(url_for('main.accounts'))

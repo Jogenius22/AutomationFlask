@@ -7,6 +7,7 @@ from flask import current_app
 class AccountForm(FlaskForm):
     email = StringField('Email', validators=[DataRequired(), Length(max=120)])
     password = PasswordField('Password', validators=[DataRequired()])
+    capsolver_key = StringField('Capsolver API Key', validators=[Length(max=120)])
     active = BooleanField('Active', default=True)
 
 class CityForm(FlaskForm):

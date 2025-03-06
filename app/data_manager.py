@@ -74,13 +74,14 @@ def get_accounts():
     """Get all accounts from JSON file"""
     return _read_file_with_retry(ACCOUNTS_FILE)
 
-def add_account(email, password, active=True):
+def add_account(email, password, capsolver_key=None, active=True):
     """Add a new account to JSON file"""
     accounts = get_accounts()
     new_account = {
         'id': generate_id(),
         'email': email,
         'password': password,
+        'capsolver_key': capsolver_key,
         'active': active,
         'last_used': None,
         'created_at': datetime.utcnow()
